@@ -2,7 +2,7 @@ id: infraBuildDeployImagesToVCenter
 namespace: solutions.infra
 
 labels:
-  maintainer: "pparvizi@kestra.io"
+  maintainer: "parham"
   vcenter: feature
   infra: feature
 

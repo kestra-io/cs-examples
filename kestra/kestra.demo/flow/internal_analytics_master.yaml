@@ -2,7 +2,7 @@ id: internal_analytics_master
 namespace: kestra.demo
 
 labels:
-  maintainer: "pparvizi@kestra.io"
+  maintainer: "parham"
   analytics: feature
   webinar: feature
 
@@ -31,7 +31,7 @@ triggers:
     
   - id: github_actions_webhook
     type: io.kestra.plugin.core.trigger.Webhook
-    key: SECRET-u7QKTzJC
+    key: "{{secret('YOUR_WEBHOOK_TOKEN')}}"
 
 tasks:
   - id: log_start

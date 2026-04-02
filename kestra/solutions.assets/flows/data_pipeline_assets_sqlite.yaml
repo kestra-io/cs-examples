@@ -2,7 +2,7 @@ id: data_pipeline_assets_sqlite
 namespace: solutions.assets
 
 labels:
-  maintainer: "pparvizi@kestra.io"
+  maintainer: "parham"
   assets: feature
   data: feature
 

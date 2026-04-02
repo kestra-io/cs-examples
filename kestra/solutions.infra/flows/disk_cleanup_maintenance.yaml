@@ -10,7 +10,7 @@ description: |
 
 labels:
   - key: "maintainer"
-    value: "pparvizi@kestra.io"
+    value: "parham"
   - key: "feature"
     value: "infra"
   - key: "feature"

@@ -2,7 +2,7 @@ id: infra_fleet_security_audit
 namespace: solutions.assets
 
 labels:
-  maintainer: "pparvizi@kestra.io"
+  maintainer: "parham"
   assets: feature
   infra: feature
   security: feature

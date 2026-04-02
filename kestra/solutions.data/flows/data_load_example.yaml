@@ -9,7 +9,7 @@ description: |
 
 labels:
   - key: "maintainer"
-    value: "pgrainger@kestra.io"
+    value: "paul"
 
 triggers:
   - id: pg_trigger

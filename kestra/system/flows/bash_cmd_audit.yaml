@@ -3,7 +3,7 @@ namespace: system
 description: Query Kestra APIs to list flows in a namespace, then use an AI Agent to scan for blacklisted bash commands within those flows.
 
 labels:
-  maintainer: "pparvizi@kestra.io"
+  maintainer: "parham"
 
 inputs:
   - id: targetNamespace

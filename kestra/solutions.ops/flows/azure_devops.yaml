@@ -7,7 +7,7 @@ variables:
   storageAccount: "pgpockestra"
 labels:
   - key: "maintainer"
-    value: "pgrainger@kestra.io"
+    value: "paul"
 inputs:
   - id: name
     type: STRING

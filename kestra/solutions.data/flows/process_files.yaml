@@ -2,7 +2,7 @@ id: process_files
 namespace: solutions.data
 labels:
   - key: "maintainer"
-    value: "pgrainger@kestra.io"
+    value: "paul"
 pluginDefaults:
   - forced: false
     type: io.kestra.plugin.jdbc.postgresql

@@ -7,7 +7,7 @@ labels:
   - key: "domain"
     value: "infra"
   - key: "maintainer"
-    value: "fqazi@kestra.io"
+    value: "caxe"
   - key: "kestra.version"
     value: "0.24.0"
   - key: "feature"

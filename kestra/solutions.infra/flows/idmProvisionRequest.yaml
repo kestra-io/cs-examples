@@ -5,7 +5,7 @@ description: >
   validates payload, and dispatches to the queued worker flow.
 
 labels:
-  maintainer: "pparvizi@kestra.io"
+  maintainer: "parham"
   idm: feature
   provisioning: feature
 

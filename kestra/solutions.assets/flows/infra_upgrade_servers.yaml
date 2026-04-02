@@ -2,7 +2,7 @@ id: infra_upgrade_servers
 namespace: solutions.assets
 
 labels:
-  maintainer: "pparvizi@kestra.io"
+  maintainer: "parham"
   assets: feature
   infra: feature
   provisioning: feature

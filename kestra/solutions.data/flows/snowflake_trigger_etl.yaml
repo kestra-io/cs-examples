@@ -6,7 +6,7 @@ concurrency:
   limit: 1
 labels:
   - key: "maintainer"
-    value: "pgrainger@kestra.io"
+    value: "paul"
 triggers:
   - id: sf
     type: io.kestra.plugin.jdbc.snowflake.Trigger

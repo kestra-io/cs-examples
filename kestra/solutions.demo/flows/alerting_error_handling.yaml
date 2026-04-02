@@ -2,7 +2,7 @@ id: alerting_error_handling
 namespace: solutions.demo
 
 labels: 
-  maintainer: "pparvizi@kestra.io"
+  maintainer: "parham"
   alerting: feature
   notifications: feature
   error-handling: feature

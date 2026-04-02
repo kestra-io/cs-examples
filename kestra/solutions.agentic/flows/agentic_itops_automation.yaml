@@ -3,7 +3,7 @@ namespace: solutions.agentic
 description: using agentic flow to triage and automate incident response.
 
 labels:
-  maintainer: "pparvizi@kestra.io"
+  maintainer: "parham"
   agentic: feature
   itops-automation: feature
   jira: feature

@@ -2,7 +2,7 @@ id: infraAnsiblePlaybook
 namespace: solutions.infra
 
 labels:
-  maintainer: "pparvizi@kestra.io"
+  maintainer: "parham"
   infra: feature
   ansible: feature
 

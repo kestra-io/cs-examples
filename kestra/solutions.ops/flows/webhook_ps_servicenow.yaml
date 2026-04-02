@@ -10,7 +10,7 @@ inputs:
         }
 labels:
   - key: "maintainer"
-    value: "pgrainger@kestra.io"
+    value: "paul"
 triggers:
   - id: webhook
     type: io.kestra.plugin.core.trigger.Webhook

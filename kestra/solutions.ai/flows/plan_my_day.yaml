@@ -4,7 +4,7 @@ description: |
   Webhook → Parallel APIs → Python normalize → flaky + retries → AI Agent summary → alerts on failure
 labels:
   - key: "maintainer"
-    value: "pgrainger@kestra.io"
+    value: "paul"
 inputs:
   - id: city
     type: STRING

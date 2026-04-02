@@ -88,6 +88,6 @@ labels:
   - key: domain
     value: infra
   - key: maintainer
-    value: fqazi@kestra.io
+    value: caxe
   - key: kestra.version
     value: 1.0.8

@@ -2,7 +2,7 @@ id: internal_analytics_subflow
 namespace: kestra.demo
 
 labels:
-  maintainer: "pparvizi@kestra.io"
+  maintainer: "parham"
   feature: "webinar"
 
 inputs:
@@ -23,7 +23,7 @@ tasks:
         type: io.kestra.plugin.git.Clone
         url: https://github.com/kestra-io/data.git
         branch: "{{ inputs.branch }}"
-        username: pparvizi
+        username: parham
         password: "{{ secret('GITHUB_TOKEN') }}"
 
       - id: build

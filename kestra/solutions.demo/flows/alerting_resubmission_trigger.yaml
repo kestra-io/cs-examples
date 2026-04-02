@@ -2,7 +2,7 @@ id: alerting_resubmission_trigger
 namespace: solutions.demo
 
 labels:
-  maintainer: "pparvizi@kestra.io"
+  maintainer: "parham"
   alerting: feature
   notifications: feature
   resubmission: feature

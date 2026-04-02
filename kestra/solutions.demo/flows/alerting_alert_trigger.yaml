@@ -2,7 +2,7 @@ id: alerting_alert_trigger
 namespace: solutions.demo
 
 labels:
-  maintainer: "pparvizi@kestra.io"
+  maintainer: "parham"
   alerting: feature
   notifications: feature
 

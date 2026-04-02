@@ -16,7 +16,7 @@ labels:
   - key: demo
     value: github_integration
   - key: maintainer
-    value: pparvizi@kestra.io
+    value: parham
   - key: concepts 
     value: nsfiles, SyncNamespaceFiles
 

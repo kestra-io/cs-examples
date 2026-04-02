@@ -44,13 +44,13 @@ inputs:
   - id: publicKey
     type: STRING
     description: "The SSH public key (starts with ssh-rsa ...)"
-    defaults: ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAACAQDDy0k7yELdXTaclVokcgEm2GqNb0LrjxXWkC6bBimRiJ4+8hz+f3Nvo0pYqipehzrwHaJEHoEOlDEhXDSZKgI1JdHuWy6J+zKhEcaEegCV+gKw68M95zIt9uzdeCd0QqF53u1ToaQBoCD9CpgMYimSoedLn9uBUBaSeq3u3Vd3tSmUxYd7Dvs+sm1qN8HHNIbOesVvBqbj+gnRIT3d1FpXsViMkxOHpz7X6omSUbuPgcimerqwXNZ3VsqVEYl8QGmWTtXXuJ9irj4C63tUxROgT/r2We1dQXJ/7tRSVeimNTYnqkde0KFuHp5IqakeJ5cjUdyXyRizTvQ7JVVfmJ5cSgwQRpUUFME1bsysh//uDkGMNseSxLYakFPPOKsGVGpWaTp9kSmN2Ow0id47/CRb6415o2NhX7Z0icIf8+OKZHtiHJmhYljIvzYyyKvlhLn06dCFSb93FawrtHoFqCUF55QPnJz4PolbEOEq67lDghy4ry/I4pNpmryw59fqf0wF7D2ROdTeio7t+VY9goJBGcCuq78ty5VbX28UORezBD2Wj/E6UT7AwYGY0P5Zb0TOkly82M2XIWT4KgchXUmuidpKgFdk2NwXgSPeGoPLrASLEZnELhfoZ5ABNDkmFMkSrqrQhv6doFph4T4pvWvVw+VJmF7yvP9Qrg/jc8CYwQ== fqazi@kestra.io
+    defaults: ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAACAQDDy0k7yELdXTaclVokcgEm2GqNb0LrjxXWkC6bBimRiJ4+8hz+f3Nvo0pYqipehzrwHaJEHoEOlDEhXDSZKgI1JdHuWy6J+zKhEcaEegCV+gKw68M95zIt9uzdeCd0QqF53u1ToaQBoCD9CpgMYimSoedLn9uBUBaSeq3u3Vd3tSmUxYd7Dvs+sm1qN8HHNIbOesVvBqbj+gnRIT3d1FpXsViMkxOHpz7X6omSUbuPgcimerqwXNZ3VsqVEYl8QGmWTtXXuJ9irj4C63tUxROgT/r2We1dQXJ/7tRSVeimNTYnqkde0KFuHp5IqakeJ5cjUdyXyRizTvQ7JVVfmJ5cSgwQRpUUFME1bsysh//uDkGMNseSxLYakFPPOKsGVGpWaTp9kSmN2Ow0id47/CRb6415o2NhX7Z0icIf8+OKZHtiHJmhYljIvzYyyKvlhLn06dCFSb93FawrtHoFqCUF55QPnJz4PolbEOEq67lDghy4ry/I4pNpmryw59fqf0wF7D2ROdTeio7t+VY9goJBGcCuq78ty5VbX28UORezBD2Wj/E6UT7AwYGY0P5Zb0TOkly82M2XIWT4KgchXUmuidpKgFdk2NwXgSPeGoPLrASLEZnELhfoZ5ABNDkmFMkSrqrQhv6doFph4T4pvWvVw+VJmF7yvP9Qrg/jc8CYwQ== caxe
 
 labels:
   - key: "domain"
     value: "infra"
   - key: "maintainer"
-    value: "fqazi@kestra.io"
+    value: "caxe"
   - key: "kestra.version"
     value: "1.2.3"
   - key: "feature"

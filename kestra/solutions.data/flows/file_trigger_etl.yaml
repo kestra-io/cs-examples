@@ -2,7 +2,7 @@ id: file_trigger_etl
 namespace: solutions.data
 labels:
   - key: "maintainer"
-    value: "pgrainger@kestra.io"
+    value: "paul"
 concurrency:
   behavior: QUEUE
   limit: 1

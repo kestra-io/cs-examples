@@ -4,7 +4,7 @@ description: >
   Webhook → Parallel GitHub calls → Python filtering & KPIs → flaky task with reties → AI summary → Slack on failure, with SLA.
 labels:
   - key: "maintainer"
-    value: "pgrainger@kestra.io"
+    value: "paul"
 inputs:
   - id: github_repo
     type: STRING

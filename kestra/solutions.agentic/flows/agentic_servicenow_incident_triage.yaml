@@ -3,7 +3,7 @@ namespace: solutions.agentic
 description: using agentic flow to triage and automate ServiceNow incident response.
 
 labels:
-  maintainer: "pparvizi@kestra.io"
+  maintainer: "parham"
   agentic: feature
   servicenow: feature
   itops-automation: feature

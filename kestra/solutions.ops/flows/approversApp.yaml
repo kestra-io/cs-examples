@@ -3,7 +3,7 @@ namespace: solutions.ops
 
 labels:
   - key: "maintainer"
-    value: "fqazi@kestra.io"
+    value: "caxe"
   - key: "feature"
     value: "hitl"
   - key: "kestra.version"
