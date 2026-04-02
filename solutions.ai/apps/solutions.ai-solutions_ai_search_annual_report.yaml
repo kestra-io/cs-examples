@@ -1,0 +1,54 @@
+id: solutions_ai_search_annual_report
+type: io.kestra.plugin.ee.apps.Execution
+displayName: Annual Report Summary
+namespace: solutions.ai
+flowId: search_annual_report
+access:
+  type: PRIVATE
+tags:
+  - Reporting
+  - AI
+
+layout:
+  - on: OPEN
+    blocks:
+      - type: io.kestra.plugin.ee.apps.core.blocks.Markdown
+        content: |
+          Select company and GPT model
+      - type: io.kestra.plugin.ee.apps.execution.blocks.CreateExecutionForm
+      - type: io.kestra.plugin.ee.apps.execution.blocks.CreateExecutionButton
+        text: Submit
+
+  - on: RUNNING
+    blocks:
+      - type: io.kestra.plugin.ee.apps.core.blocks.Markdown
+        content: |
+          ## Fetching your data...
+          Don't close this window. The results will be displayed as soon as the processing is complete.
+      - type: io.kestra.plugin.ee.apps.core.blocks.Image
+        source: "https://media4.giphy.com/media/v1.Y2lkPTc5MGI3NjExOTFzbGQ4aGM1cDl4MWZlbmVjM2QwcWN1Y3h3ODh0YzZyYzkyaHFlNSZlcD12MV9pbnRlcm5hbF9naWZfYnlfaWQmY3Q9Zw/a5viI92PAF89q/giphy.gif"
+      - type: io.kestra.plugin.ee.apps.execution.blocks.CancelExecutionButton
+        text: Cancel request
+
+  - on: SUCCESS
+    blocks:
+      - type: io.kestra.plugin.ee.apps.core.blocks.Markdown
+        content: |
+          ## Request completed
+          You requested the following dataset:
+
+      - type: io.kestra.plugin.ee.apps.execution.blocks.Inputs
+      - type: io.kestra.plugin.ee.apps.core.blocks.Markdown
+        content: "{{execution.outputs.summary}}"
+
+      - type: io.kestra.plugin.ee.apps.core.blocks.Alert
+        style: SUCCESS
+        showIcon: true
+        content: Your data is ready for download!
+
+      - type: io.kestra.plugin.ee.apps.execution.blocks.Outputs
+
+      - type: io.kestra.plugin.ee.apps.core.blocks.Button
+        text: Submit new request
+        url: "{{ app.url }}"
+        style: DEFAULT

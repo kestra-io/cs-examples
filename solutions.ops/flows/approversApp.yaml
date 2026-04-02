@@ -1,0 +1,45 @@
+id: approversApp
+namespace: solutions.ops
+
+labels:
+  - key: "maintainer"
+    value: "caxe"
+  - key: "feature"
+    value: "hitl"
+  - key: "kestra.version"
+    value: "0.24.0"
+
+inputs:
+  - id: executionIdsToBeApproved
+    type: MULTISELECT
+    values:
+      - "5jdC4WS1K7fbPiHFA9FY6R"
+      - "LwyVfiqXVftDMCkTuZ6Mh"
+      - "1VJs3kyobbjCp4JGLxfWgM"
+    required: false
+  - id: action
+    type: SELECT
+    values:
+      - Approve
+      - Reject
+
+tasks:
+  - id: hello
+    type: io.kestra.plugin.core.log.Log
+    message: Hello World! 🚀
+
+  - id: for_each
+    type: io.kestra.plugin.core.flow.ForEach
+    values: "{{ inputs.executionIdsToBeApproved }}"
+    concurrencyLimit: 1
+    runIf: "{{ inputs.action == 'Approve' and (inputs.executionIdsToBeApproved ?? false) }}"
+    tasks:
+      - id: approve
+        type: io.kestra.plugin.core.http.Request
+        uri: https://partners.kestra.cloud/api/v1/demo/executions/{{ taskrun.value }}/resume
+        headers:
+          Authorization: "Bearer {{ secret('KESTRA_CLOUD_API_TOKEN')}}"
+        method: POST
+        contentType: multipart/form-data
+        formData:
+          signoff: "{{ inputs.action == 'Approve' ? true : false}}"

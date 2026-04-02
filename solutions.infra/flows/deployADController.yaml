@@ -1,0 +1,173 @@
+id: deployADController
+namespace: solutions.infra
+
+tasks:
+  - id: createOrDelete
+    type: io.kestra.plugin.core.flow.If
+    condition: "{{ inputs.action == 'create'}}"
+    then:
+      - id: createADController
+        disabled: false
+        type: io.kestra.plugin.terraform.cli.TerraformCLI
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: "gcp-svc-account.json"
+        inputFiles:
+          main.tf: "{{ render(read('deployADController/main.tf')) }}"
+          backend.tf: "{{ render(read('createVM/backend.tf')) }}"
+          gcp-svc-account.json: "{{ secret('GCP_SVC_ACCOUNT') }}"
+          setup-dc.ps1: "{{ render(read('deployADController/setup-dc.ps1')) }}"
+        beforeCommands:
+          - terraform init -backend-config="prefix={{ inputs.vmName }}"
+        commands:
+          - terraform plan
+          - terraform apply -auto-approve -json
+          - terraform output -raw external_ip > external_ip.txt
+        allowFailure: false
+        outputFiles:
+          - "*.txt"
+        assets:
+          outputs:
+            - id: "{{ inputs.vmName }}"
+              type: io.kestra.plugin.ee.assets.VM
+              metadata:
+                vmName: "{{ inputs.vmName }}"
+                vmSize: "{{ inputs.vmSize }}"
+                zone: "{{ inputs.zone }}"
+                billingAccount: "{{ inputs.billingAccount }}"
+                osFlavor: "{{ inputs.osFlavor }}"
+                network: "{{ inputs.network }}"
+                subnet: "{{ inputs.subnet }}"
+                ipAddress: "{{ inputs.ipAddress }}"
+                state: "active"
+
+      - id: waitForStartupBootConfig
+        disabled: false
+        type: io.kestra.plugin.core.flow.Sleep
+        duration: "PT600S"
+
+      - id: resetPassword
+        disabled: false
+        type: io.kestra.plugin.gcp.cli.GCloudCLI
+        inputFiles:
+          gcp-svc-account.json: "{{ secret('GCP_SVC_ACCOUNT') }}"
+        projectId: "{{ inputs.billingAccount }}"
+        commands:
+          - gcloud auth activate-service-account --key-file=gcp-svc-account.json
+          - gcloud compute reset-windows-password "{{ inputs.vmName }}" --user "{{ inputs.username }}" --zone "{{ inputs.zone }}" --project "{{ inputs.billingAccount }}" --quiet --format json > credentials.json
+        outputFiles:
+          - credentials.json
+
+      - id: createADConfigMap
+        type: io.kestra.plugin.core.kv.Set
+        kvType: JSON
+        description: Holds the internal/external ipAddresses, domain/VM name and admin username
+        key: dcConfig
+        value: |
+          {
+            "internalIPAddress": "{{ inputs.ipAddress }}",
+            "externalIPAddress": "{{ fromJson(read(outputs.resetPassword.outputFiles['credentials.json'])).ip_address }}",
+            "username": "{{ inputs.username }}",
+            "domainName": "{{ inputs.domain }}",
+            "vmName": "{{ inputs.vmName }}",
+            "subnetCIDR": "{{ inputs.subnetCIDR }}"
+          }
+
+      - id: enableReverseLookupZone
+        disabled: false
+        type: io.kestra.plugin.ansible.cli.AnsibleCLI
+        # Ensure pywinrm is installed in the runner environment so Ansible can talk to Windows
+        beforeCommands:
+          - pip install pywinrm
+        # Define the Ansible Inventory inline, utilizing Kestra inputs for dynamic execution
+        inputFiles:
+          inventory.ini: "{{ render(read('deployADController/inventory.ini')) }}"
+          # Define the Ansible Playbook inline
+          playbook.yml: "{{ render(read('deployADController/playbook.yml')) }}"
+        commands:
+          - ansible-playbook -i inventory.ini playbook.yml
+    else:
+      - id: deleteADController
+        disabled: false
+        type: io.kestra.plugin.terraform.cli.TerraformCLI
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: "gcp-svc-account.json"
+        inputFiles:
+          main.tf: "{{ render(read('deployADController/main.tf')) }}"
+          backend.tf: "{{ render(read('createVM/backend.tf')) }}"
+          gcp-svc-account.json: "{{ secret('GCP_SVC_ACCOUNT') }}"
+          setup-dc.ps1: "{{ render(read('deployADController/setup-dc.ps1')) }}"
+        beforeCommands:
+          - terraform init -backend-config="prefix={{ inputs.vmName }}"
+        commands:
+          - terraform plan
+          - terraform destroy -auto-approve -json
+        allowFailure: false
+        assets:
+          outputs:
+            - id: "{{ inputs.vmName }}"
+              type: io.kestra.plugin.ee.assets.VM
+              metadata:
+                vmName: "{{ inputs.vmName }}"
+                vmSize: "{{ inputs.vmSize }}"
+                zone: "{{ inputs.zone }}"
+                billingAccount: "{{ inputs.billingAccount }}"
+                osFlavor: "{{ inputs.osFlavor }}"
+                network: "{{ inputs.network }}"
+                subnet: "{{ inputs.subnet }}"
+                ipAddress: "{{ inputs.ipAddress }}"
+                state: "deleted"
+
+inputs:
+  - id: action
+    type: SELECT
+    values:
+      - create
+      - delete
+  - id: domain
+    type: STRING
+    defaults: kestra.local
+  - id: vmName
+    type: STRING
+    defaults: ad-controller
+  - id: ipAddress
+    type: STRING
+    defaults: 10.128.0.10
+    description: Internal Ip Address for your DomainController
+  - id: remoteUserIpAddress
+    type: STRING
+    description: Your IpAddress for allowing RDP access. Check using `curl -s ifconfig.me`
+    defaults: 106.222.232.228
+  - id: osFlavor
+    type: STRING
+    defaults: windows-cloud/windows-2022
+  - id: subnet
+    type: STRING
+    defaults: pg-gcp-demo-vpc
+  - id: subnetCIDR
+    type: STRING
+    defaults: 10.128.0.0/20
+  - id: zone
+    type: STRING
+    defaults: us-central1-a
+  - id: vmSize
+    type: STRING
+    defaults: e2-standard-4
+  - id: billingAccount
+    type: STRING
+    defaults: kestra-sandbox
+  - id: network
+    type: STRING
+    defaults: pg-gcp-demo-vpc
+  - id: username
+    type: STRING
+    defaults: Administrator
+
+labels:
+  - key: "domain"
+    value: "infra"
+  - key: "maintainer"
+    value: "caxe"
+  - key: "kestra.version"
+    value: "1.2.3"
+  - key: "feature"
+    value: "terraform"

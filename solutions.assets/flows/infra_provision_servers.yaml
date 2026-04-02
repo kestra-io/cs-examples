@@ -1,0 +1,56 @@
+id: infra_provision_servers
+namespace: solutions.assets
+
+labels:
+  maintainer: "parham"
+  assets: feature
+  infra: feature
+  provisioning: feature
+
+tasks:
+  - id: read_server_manifest
+    type: io.kestra.plugin.core.namespace.DownloadFiles
+    namespace: "{{ flow.namespace }}"
+    files:
+      - server_manifest.json
+
+  - id: provision_servers
+    type: io.kestra.plugin.core.flow.ForEach
+    values: '{{ read(outputs.read_server_manifest["files"]["/server_manifest.json"]) }}'
+    tasks:
+      - id: parse_server_details
+        type: io.kestra.plugin.core.execution.SetVariables
+        variables:
+          server_id: "{{ fromJson(taskrun.value).id }}"
+          server_ip: "{{ fromJson(taskrun.value).ip }}"
+          server_os: "{{ fromJson(taskrun.value).os }}"
+          server_env: "{{ fromJson(taskrun.value).env }}"
+          python_version: "{{ fromJson(taskrun.value).python_version }}"
+
+      - id: terraform_apply
+        type: io.kestra.plugin.scripts.shell.Commands
+        runner: PROCESS
+        commands:
+          - echo "Provisioning {{ vars.server_id }} at {{ vars.server_ip }}..."
+          - echo "Upgrading env={{ vars.server_env }} , python-version={{ vars.python_version }}"
+          - sleep 1.5
+
+      - id: register_asset
+        type: io.kestra.plugin.core.debug.Return
+        format: "Asset {{ vars.server_id }} registered."
+        assets:
+          outputs:
+            - id: "{{ vars.server_id }}"
+              type: io.kestra.plugin.ee.assets.VM
+              namespace: "{{flow.namespace}}"
+              metadata:
+                env: "{{ vars.server_env }}"
+                os: "{{ vars.server_os }}"
+                python_version: "{{ vars.python_version }}"
+                ip_address: "{{ vars.server_ip }}"
+
+triggers:
+  - id: webhook_trigger
+    type: io.kestra.plugin.core.trigger.Webhook
+    key: "{{secret('YOUR_WEBHOOK_TOKEN')}}"
+    description: "Trigger to provision servers via a webhook call"

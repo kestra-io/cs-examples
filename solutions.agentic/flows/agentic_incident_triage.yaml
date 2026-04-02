@@ -1,0 +1,74 @@
+id: agentic_incident_triage
+namespace: solutions.agentic
+description: using agentic flow to triage and automate incident response.
+
+labels:
+  maintainer: "parham"
+  agentic: feature
+  incident-triage: feature
+  itops-automation: feature
+  webhook: feature
+
+triggers:
+  - id: incident_trigger
+    type: io.kestra.plugin.core.trigger.Webhook
+    key: "{{secret('YOUR_WEBHOOK_TOKEN')}}"
+
+tasks:
+  - id: log_incident
+    type: io.kestra.plugin.core.log.Log
+    message: |
+      incoming incident:
+      ---
+      {{ trigger.body ?? kv('default-incident') }}
+
+  - id: ingest_kb
+    type: io.kestra.plugin.ai.rag.IngestDocument
+    embeddings:
+      type: io.kestra.plugin.ai.embeddings.KestraKVStore
+    provider:
+      type: io.kestra.plugin.ai.provider.GoogleGemini
+      modelName: gemini-embedding-exp-03-07
+    drop: true
+    fromDocuments:
+      - content: "{{ read('nsfile:///kb.md') }}"
+
+  - id: enrich_with_rag
+    type: io.kestra.plugin.ai.rag.ChatCompletion
+    chatProvider:
+      type: io.kestra.plugin.ai.provider.GoogleGemini
+      modelName: gemini-2.5-flash
+    embeddingProvider:
+      type: io.kestra.plugin.ai.provider.GoogleGemini
+      modelName: gemini-embedding-exp-03-07
+    embeddings:
+      type: io.kestra.plugin.ai.embeddings.KestraKVStore
+    systemMessage: |
+      You are an Infra's SRE assistant. Use the provided KB and incident to propose concise triage steps.
+
+      - Always include "Risk", "Steps", and "Verification".
+      - Structure your response in formatted markdown sections.
+      - Simply ignore tickets not related to KB, produce only 'N/A'.
+    prompt: |
+      Incident JSON:
+      {{ trigger.body ?? kv('default-incident') }}
+
+      Produce:
+      - concise_summary
+      - work_notes (bullet list)
+      - proposed_resolution (one paragraph)
+
+  - id: log_incident_response
+    type: io.kestra.plugin.core.log.Log
+    message: "{{ outputs.enrich_with_rag.textOutput }}"
+
+  - id: post_to_slack
+    type: io.kestra.plugin.slack.notifications.SlackIncomingWebhook
+    url: "{{ secret(key='SLACK_WEBHOOK',namespace='system') }}"
+    messageText: "{{ outputs.enrich_with_rag.textOutput }}"
+
+pluginDefaults:
+  - type: io.kestra.plugin.ai.provider.GoogleGemini
+    values:
+      apiKey: "{{ secret(key='GEMINI_KEY', namespace='system') }}"
+      modelName: gemini-2.5-flash

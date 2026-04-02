@@ -1,0 +1,45 @@
+id: tenant_sync_git
+namespace: system
+
+inputs:
+  - id: source
+    type: SELECT
+    values:
+      - KESTRA
+      - GIT
+    defaults: GIT
+    displayName: Trigger Sync from
+
+triggers:
+  - id: gitWebhookTrigger
+    type: io.kestra.plugin.core.trigger.Webhook
+    key: "{{ secret('KESTRA_FLOW_GIT_SYNC_WEBHOOK_KEY') }}"
+
+labels:
+  - key: "domain"
+    value: "infra"
+  - key: "maintainer"
+    value: "caxe"
+  - key: "kestra.version"
+    value: "1.0.8"
+  - key: "feature"
+    value: "git"
+
+tasks:
+  - id: sync
+    type: io.kestra.plugin.git.TenantSync
+    sourceOfTruth: "{{ inputs.source }}"
+    whenMissingInSource: DELETE
+    protectedNamespaces:
+      - system
+    url: https://github.com/kestra-io/customer-success.git
+    username: caxefaizan
+    password: "{{ secret('GIT_HUB_PAT') }}"
+    branch: "{{ inputs.source == 'GIT' ? 'main' : 'feature/syncTenant' }}"
+    gitDirectory: kestra
+    kestraUrl: https://partners.kestra.cloud
+    auth:
+      username: dummy
+      password: dummy
+      # apiToken: "{{ secret(key='KESTRA_CLOUD_API_TOKEN', namespace='system') }}"
+    dryRun: false

@@ -1,0 +1,79 @@
+id: control-1-1_6-1_6_5
+namespace: solutions.infra
+
+labels:
+  - key: "domain"
+    value: "infra"
+  - key: "maintainer"
+    value: "caxe"
+  - key: "kestra.version"
+    value: "0.24.0"
+  - key: "feature"
+    value: "ssh"
+
+inputs:
+  - id: remediateControls
+    description: To auto remediate non compliant controls, toggle ON.
+    displayName: Auto Remediate
+    type: BOOL
+    defaults: true
+
+  - id: ipAddress
+    type: STRING
+    defaults: localhost
+
+variables:
+  COMPLIANT: Compliant
+  NOT_COMPLIANT: Not Compliant
+
+tasks:
+  # get configuration from kv store
+  - id: getConfiguration
+    type: io.kestra.plugin.core.kv.Get
+    key: "{{ render(flow.id) }}"
+
+  # check the current setting in VM
+  - id: assess-1_6_5
+    type: io.kestra.plugin.fs.ssh.Command
+    host: "{{ inputs.ipAddress }}"
+    authMethod: PUBLIC_KEY
+    username: "{{ secret('SSH_VM_USER') }}"
+    privateKey: "{{ secret('SSH_PVT_KEY') }}"
+    commands:
+      - 'echo $(stat -Lc "Access: (%#a/%A)  Uid: ( %u/ %U) Gid: { %g/ %G)" /etc/issue) > output.log'
+      - echo '::{"outputs":{"result":"'$(cat output.log)'"}}::'
+
+  - id: status-1_6_5
+    type: io.kestra.plugin.core.flow.If
+    condition: '{{ outputs["assess-1_6_5"]["vars"]["result"] == outputs.getConfiguration.value}}'
+    then:
+      - id: compliant-1_6_5
+        type: io.kestra.plugin.core.debug.Return
+        format: "{{ vars.COMPLIANT }}"
+    else:
+      - id: doRemediate
+        type: io.kestra.plugin.core.flow.If
+        condition: "{{ inputs.remediateControls == true }}"
+        then:
+          - id: remediate-1_6_5
+            type: io.kestra.plugin.fs.ssh.Command
+            host: "{{ inputs.ipAddress }}"
+            username: "{{ secret('SSH_VM_USER') }}"
+            privateKey: "{{ secret('SSH_PVT_KEY') }}"
+            authMethod: PUBLIC_KEY
+            commands:
+              - sudo chown root:root $(readlink -e /etc/issue)
+              - sudo chmod u-x,go-wx $(readlink -e /etc/issue)
+          - id: remediateResult-1_6_5
+            type: io.kestra.plugin.core.debug.Return
+            format: "{{ vars.COMPLIANT }}"
+        else:
+          - id: not-compliant-1_6_5
+            type: io.kestra.plugin.core.debug.Return
+            format: "{{ vars.NOT_COMPLIANT }}"
+
+# return outout for parent flow
+outputs:
+  - id: complianceStatus-1_6_5
+    type: STRING
+    value: '{{ outputs["compliant-1_6_5"]["value"] ?? outputs["remediateResult-1_6_5"]["value"] ?? outputs["not-compliant-1_6_5"]["value"] ?? "Error" }}'

@@ -1,0 +1,55 @@
+id: internal_analytics_subflow
+namespace: kestra.demo
+
+labels:
+  maintainer: "parham"
+  feature: "webinar"
+
+inputs:
+  - id: cmd
+    type: STRING
+    displayName: "Command"
+
+  - id: branch
+    type: STRING
+    displayName: "Branch"
+    defaults: "master"
+
+tasks:
+  - id: git
+    type: io.kestra.plugin.core.flow.WorkingDirectory
+    tasks:
+      - id: clone
+        type: io.kestra.plugin.git.Clone
+        url: https://github.com/kestra-io/data.git
+        branch: "{{ inputs.branch }}"
+        username: parham
+        password: "{{ secret('GITHUB_TOKEN') }}"
+
+      - id: build
+        type: io.kestra.plugin.docker.Build
+        tags:
+          - py-data-app
+        dockerfile: "Dockerfile"
+
+      - id: python
+        type: io.kestra.plugin.scripts.python.Commands
+        containerImage: "{{ outputs.build.imageId }}"
+        taskRunner:
+          type: io.kestra.plugin.scripts.runner.docker.Docker
+          pullPolicy: NEVER
+        inputFiles:
+          sa.json: "{{ secret('GCP_SA') }}"
+        env:
+          GCP_SA_CREDENTIALS: "{{ secret('GCP_SA') }}"
+          GOOGLE_APPLICATION_CREDENTIALS: "{{ secret('GCP_SA') }}"
+          GCP_PROJECT_ID: "kestra-prd"
+          GOOGLE_CLOUD_PROJECT: "kestra-prd"
+          MAXMIND_API_KEY: "{{ render(namespace.maxmind.apiKey) }}"
+          HUBSPOT_ACCESS_TOKEN: "{{ secret('HUBSPOT_TOKEN') }}"
+        beforeCommands:
+          # Prevent dns resolution issue: https://github.com/kestra-io/kestra-ee/issues/3202
+          - echo "nameserver 8.8.8.8" > /etc/resolv.conf
+          - cp sa.json /app/sa.json
+        commands:
+          - "{{ inputs.cmd }}"

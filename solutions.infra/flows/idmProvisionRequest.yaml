@@ -1,0 +1,102 @@
+id: idmProvisionRequest
+namespace: solutions.infra
+description: >
+  Front-door flow: receives user provisioning requests via Webhook,
+  validates payload, and dispatches to the queued worker flow.
+
+labels:
+  maintainer: "parham"
+  idm: feature
+  provisioning: feature
+
+triggers:
+  - id: user_provisioning_webhook
+    type: io.kestra.plugin.core.trigger.Webhook
+    key: "{{secret('YOUR_WEBHOOK_TOKEN')}}"
+
+inputs:
+  - id: payload
+    type: JSON
+    defaults: |
+      {
+        "userPrincipalName": "jdoe@mercy.org",
+        "displayName": "John Doe",
+        "department": "Radiology",
+        "licensePlan": "M365_E3",
+        "groups": ["Radiology-Staff", "VPN-Users"],
+        "expirationDate": "2025-12-31",
+        "reason": "Contractor - 6 month project"
+      }
+
+tasks:
+  - id: validateRequest
+    type: io.kestra.plugin.scripts.python.Script
+    dependencies:
+      - kestra
+    script: |
+      import json, uuid, sys
+      from kestra import Kestra
+
+      raw = """{{ trigger.body ?? inputs.payload }}"""
+      data = json.loads(raw)
+
+      required = ["userPrincipalName", "displayName"]
+      missing = [f for f in required if f not in data or not data[f]]
+      if missing:
+          print(f"Missing required fields: {', '.join(missing)}")
+          raise Exception("Invalid request payload")
+      # add request id
+      data["requestId"] = str(uuid.uuid4())
+      Kestra.outputs(data)
+
+  - id: sendEmailProvisionRequest
+    type: io.kestra.plugin.core.log.Log
+    message: "Send an email for provisioning request {{ outputs.validateRequest.vars.requestId }} to {{ outputs.validateRequest.vars.userPrincipalName }}"
+
+  # - id: pauseForApproval
+  #   type: io.kestra.plugin.core.flow.Pause
+  #   description: "Pause for manual approval of the provisioning request."
+
+  - id: provisionUser
+    type: io.kestra.plugin.core.flow.Sequential
+    retry: 
+      type: constant
+      behavior: RETRY_FAILED_TASK
+      maxAttempts: 5
+      interval: PT2S
+    tasks:
+      - id: createUser
+        type: io.kestra.plugin.scripts.powershell.Script
+        script: |
+          Write-Host "Creating user {{ outputs.validateRequest.vars.userPrincipalName }}"
+  
+      - id: addToGroup
+        type: io.kestra.plugin.scripts.powershell.Script
+        script: |
+          Write-Host "Adding user {{ outputs.validateRequest.vars.userPrincipalName }} to groups {{ outputs.validateRequest.vars.groups }}"
+ 
+      - id: addToGraph
+        type: io.kestra.plugin.scripts.powershell.Script
+        script: |
+          Write-Host "Adding user {{ outputs.validateRequest.vars.userPrincipalName }} to Graph with display name {{ outputs.validateRequest.vars.displayName }}"
+          $rand = {{ (taskrun.attemptsCount ?? 0) + 1}}
+          Write-Host "Random number: $rand"
+          if ($rand -lt 3) {
+              Write-Error "Failed adding user to graph!"
+              exit 1
+          }
+          Write-Host "Added user to graph successfully"
+
+      - id: callProvisionAPIs
+        type: io.kestra.plugin.core.http.Request
+        uri: https://postman-echo.com/get
+        method: GET
+        params:
+          principlaName: "{{ outputs.validateRequest.vars.userPrincipalName }}"
+        body: "{{ trigger.body ?? inputs.payload }}"
+
+      - id: sendProvisionDone
+        type: io.kestra.plugin.core.debug.Return
+        format: |
+          Provisioning request accepted.
+          Request ID: {{ outputs.validateRequest.vars.requestId }}
