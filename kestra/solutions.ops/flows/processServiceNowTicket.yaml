@@ -1,0 +1,80 @@
+id: processServiceNowTicket
+namespace: solutions.ops
+labels:
+  - key: feature
+    value: servicenow
+  - key: domain
+    value: infra
+  - key: maintainer
+    value: fqazi@kestra.io
+  - key: kestra.version
+    value: 1.0.8
+inputs:
+  - id: ticketNumber
+    type: STRING
+  - id: shortDescription
+    type: STRING
+  - id: openedAt
+    type: STRING
+  - id: sysID
+    type: STRING
+  - id: category
+    type: STRING
+
+tasks:
+  - id: logTicket
+    type: io.kestra.plugin.core.log.Log
+    message: |
+      ticketNumber: "{{ inputs.ticketNumber }}"
+      shortDescription: "{{ inputs.shortDescription }}"
+      openedAt: "{{ inputs.openedAt }}"
+      sysID: "{{ inputs.sysID }}"
+      category: "{{ inputs.category }}"
+
+  - id: triggerAnsibleIfSoftwareCategory
+    type: io.kestra.plugin.core.flow.If
+    condition: "{{ inputs.category == 'Software' }}"
+    then:
+      - id: when_true
+        type: io.kestra.plugin.ansible.cli.AnsibleCLI
+        inputFiles:
+          inventory.ini: |
+            localhost ansible_connection=local
+          myplaybook.yml: |
+            ---
+            - hosts: all
+              tasks:
+                - name: Print Hello World
+                  debug:
+                    msg: "Fix Software!"
+                - name: Show disk space
+                  shell: df -h
+        containerImage: cytopia/ansible:latest-tools
+        commands:
+          - ansible-playbook -i inventory.ini myplaybook.yml
+    else:
+      - id: when_false
+        type: io.kestra.plugin.core.log.Log
+        message: "Out of Scope"
+
+  - id: sendNotification
+    type: io.kestra.plugin.core.log.Log
+    message: Fix applied
+
+  - id: updateServiceNowTicket
+    type: io.kestra.plugin.servicenow.Update
+    domain: dev219537
+    username: admin
+    password: "{{ secret(namespace='solutions.agentic',key='SERVICE_NOW_PASSWORD') }}"
+    sysId: "{{ inputs.sysID }}"
+    data:
+      state: "7"
+      close_notes: "Automatically closed by Kestra flow."
+      close_code: "Solution provided"
+      resolution_code: "2"
+    table: incident
+    options:
+      auth:
+        type: BASIC
+        username: admin
+        password: "{{ secret(namespace='solutions.agentic',key='SERVICE_NOW_PASSWORD') }}"

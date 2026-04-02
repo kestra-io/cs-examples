@@ -1,0 +1,57 @@
+id: onboardUsertoVM
+namespace: solutions.infra
+
+tasks:
+  - id: vmMetadata
+    type: io.kestra.plugin.core.output.OutputValues
+    values:
+      metadata: "{{ (assets(type='io.kestra.plugin.ee.assets.VM' , id = inputs.vmAssetId) | first).metadata }}"
+
+  - id: getExternalIp
+    type: io.kestra.plugin.core.kv.Get
+    key: "externalIpAddressMapping"
+
+  - id: run_ansible
+    type: io.kestra.plugin.ansible.cli.AnsibleCLI
+    inputFiles:
+      id_rsa: "{{ secret('SSH_PVT_KEY') }}"
+      inventory.ini: |
+        [targets]
+        {{ kv('externalIpAddressMapping' )[fromJson(outputs.vmMetadata.values.metadata).vmName] }} ansible_user=root ansible_ssh_private_key_file=id_rsa ansible_ssh_common_args='-o StrictHostKeyChecking=no'
+      playbook.yml: "{{ render(read('onboardUser/playbook.yml')) }}"
+    env:
+      ANSIBLE_HOST_KEY_CHECKING: "False"
+    commands:
+      # 1. Secure the private key (required by SSH)
+      - chmod 600 id_rsa
+
+      # 2. Run the playbook using the generated inventory
+      - ansible-playbook -i inventory.ini playbook.yml
+    assets:
+      inputs:
+        - id: "{{ inputs.vmAssetId }}"
+
+inputs:
+  - id: vmAssetId
+    type: SELECT
+    expression: "{{ assets(type='io.kestra.plugin.ee.assets.VM' ) | jq('.[].id')}}"
+
+  - id: username
+    type: STRING
+    description: "The new user's login name"
+    defaults: caxe
+
+  - id: publicKey
+    type: STRING
+    description: "The SSH public key (starts with ssh-rsa ...)"
+    defaults: ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAACAQDDy0k7yELdXTaclVokcgEm2GqNb0LrjxXWkC6bBimRiJ4+8hz+f3Nvo0pYqipehzrwHaJEHoEOlDEhXDSZKgI1JdHuWy6J+zKhEcaEegCV+gKw68M95zIt9uzdeCd0QqF53u1ToaQBoCD9CpgMYimSoedLn9uBUBaSeq3u3Vd3tSmUxYd7Dvs+sm1qN8HHNIbOesVvBqbj+gnRIT3d1FpXsViMkxOHpz7X6omSUbuPgcimerqwXNZ3VsqVEYl8QGmWTtXXuJ9irj4C63tUxROgT/r2We1dQXJ/7tRSVeimNTYnqkde0KFuHp5IqakeJ5cjUdyXyRizTvQ7JVVfmJ5cSgwQRpUUFME1bsysh//uDkGMNseSxLYakFPPOKsGVGpWaTp9kSmN2Ow0id47/CRb6415o2NhX7Z0icIf8+OKZHtiHJmhYljIvzYyyKvlhLn06dCFSb93FawrtHoFqCUF55QPnJz4PolbEOEq67lDghy4ry/I4pNpmryw59fqf0wF7D2ROdTeio7t+VY9goJBGcCuq78ty5VbX28UORezBD2Wj/E6UT7AwYGY0P5Zb0TOkly82M2XIWT4KgchXUmuidpKgFdk2NwXgSPeGoPLrASLEZnELhfoZ5ABNDkmFMkSrqrQhv6doFph4T4pvWvVw+VJmF7yvP9Qrg/jc8CYwQ== fqazi@kestra.io
+
+labels:
+  - key: "domain"
+    value: "infra"
+  - key: "maintainer"
+    value: "fqazi@kestra.io"
+  - key: "kestra.version"
+    value: "1.2.3"
+  - key: "feature"
+    value: "terraform"

@@ -1,0 +1,213 @@
+id: webhook_ps_servicenow
+namespace: solutions.ops
+description: Flow triggered by a webhook, run PowerShell, and create ServiceNow tickets.
+
+inputs:
+  - id: defaultWebhoobPayload
+    type: JSON
+    defaults: |
+        { "requestId": "c0271c3c-a256-4e6a-8a63-2a60a2c1b1de", "storeId": "VA-014", "vmName": "retail-edge-va014", "checks": [ "disk" ], "priority": "normal", "requestedBy": "maya.smith@acme-retail.com" 
+        }
+labels:
+  - key: "maintainer"
+    value: "pgrainger@kestra.io"
+triggers:
+  - id: webhook
+    type: io.kestra.plugin.core.trigger.Webhook
+    key: "{{secret('YOUR_WEBHOOK_TOKEN')}}" # IMPORTANT: Replace with a strong, unique, and secure key
+
+tasks:
+  - id: validate_payload
+    type: io.kestra.plugin.scripts.python.Script
+    description: Parse the incoming webhook JSON payload and make it available as outputs.
+    dependencies:
+      - kestra
+    script: |
+      from kestra import Kestra
+      import sys, json, re
+      from datetime import datetime, timezone
+
+      ALLOWED_CHECKS = {"disk"}
+      PRIORITY_TO_SEV = {"low": 4, "normal": 3, "high": 2}
+
+      logger = Kestra.logger()
+
+      def fail(msg):
+          logger.error(msg)
+          raise RuntimeError(msg)
+
+      def main():
+          raw = '''{{ trigger.body ?? '' }}'''
+          if not raw:
+            logger.warning("Missing trigger payload - using the default payload")
+            raw = '''{{ inputs.defaultWebhoobPayload }}'''
+          try:
+            payload = json.loads(raw)
+          except Exception:
+            fail("Invalid payload JSON")
+
+          # required fields
+          for f in ["requestId", "storeId", "vmName", "checks", "priority", "requestedBy"]:
+              if f not in payload:
+                  fail(f"missing_field:{f}")
+
+          # normalize
+          payload["storeId"] = str(payload["storeId"]).strip().upper()
+
+          if not isinstance(payload["checks"], list) or not payload["checks"]:
+              fail("checks_must_be_nonempty_list")
+
+          # whitelist checks
+          bad = [c for c in payload["checks"] if c not in ALLOWED_CHECKS]
+          if bad:
+              fail(f"unsupported_checks:{bad}")
+
+          # priority
+          pr = str(payload["priority"]).lower()
+          if pr not in PRIORITY_TO_SEV:
+              fail("invalid_priority")
+          payload["sev"] = PRIORITY_TO_SEV[pr]
+
+          # email basic sanity
+          if "@" not in str(payload["requestedBy"]):
+              fail("invalid_requestedBy_email")
+
+          # add server timestamp to demonstrate enrichment
+          payload["receivedAt"] = datetime.now(timezone.utc).isoformat()
+
+          logger.info(f"Validated payload: {payload}")
+          Kestra.outputs(payload)
+
+      main()
+  - id: run_powershell_commands
+    type: io.kestra.plugin.scripts.powershell.Script
+    description: Invoke PowerShell script.
+    outputFiles:
+      - healthcheck_report.json
+    script: |
+      param(
+        [Parameter(Mandatory=$false)]
+        [string]$PayloadJson = '{{ outputs.validate_payload | json }}'
+      )
+
+      # Parse input safely
+      try {
+        $payload = $PayloadJson | ConvertFrom-Json
+      } catch {
+        $err = [pscustomobject]@{
+          ok = $false
+          error = "invalid_json"
+          detail = $_.Exception.Message
+        }
+        $err | ConvertTo-Json -Compress
+        exit 0
+      }
+
+      # Only act on 'disk' for this simple demo
+      $doDisk = $true
+      if ($payload.PSObject.Properties.Name -contains 'checks') {
+        $doDisk = ($payload.checks -contains 'disk')
+      }
+
+      $diskMetrics = @()
+      if ($doDisk) {
+        # Cross-platform drive stats
+        $drives = [System.IO.DriveInfo]::GetDrives() | Where-Object { $_.IsReady -and ($_.DriveType.ToString() -eq 'Fixed') }
+        foreach ($d in $drives) {
+          $total = [double]$d.TotalSize
+          $free  = [double]$d.AvailableFreeSpace
+          $sizeGB = if ($total -gt 0) { [math]::Round($total / 1GB, 2) } else { 0 }
+          $freeGB = if ($total -gt 0) { [math]::Round($free  / 1GB, 2) } else { 0 }
+          $pctFree = if ($total -gt 0) { [math]::Round(100 * $free / $total, 2) } else { 0 }
+
+          $diskMetrics += [pscustomobject]@{
+            drive   = ($d.Name.TrimEnd('\','/'))  # "C:" on Windows, "/" on Linux
+            sizeGB  = $sizeGB
+            freeGB  = $freeGB
+            pctFree = $pctFree
+          }
+        }
+      }
+
+      # Simple advice text for the demo
+      $advice = if (($diskMetrics | Where-Object { $_.pctFree -lt 15 }).Count -gt 0) {
+        "Low free space detected on one or more volumes. Consider cleanup."
+      } else {
+        "Disk capacity within acceptable thresholds."
+      }
+
+      # Build result
+      $result = [pscustomobject]@{
+        ok         = $true
+        kind       = "healthcheck"
+        checks     = if ($payload.checks) { $payload.checks } else { @("disk") }
+      #  request    = $payload
+        metrics    = @{ disk = $diskMetrics }
+        advice     = $advice
+        measuredAt = (Get-Date).ToUniversalTime().ToString("o")
+      }
+      # Convert the result to JSON and store it in a variable
+      $jsonOutput = $result | ConvertTo-Json -Depth 6 -Compress
+
+      # Write the JSON output to a file
+      # The -Force parameter will overwrite the file if it already exists
+      $jsonOutput | Out-File -FilePath "healthcheck_report.json" -Force
+      # $result | ConvertTo-Json -Depth 6 -Compress
+      # $result | Write-Output
+      # # Write-Output $result
+  - id: create_servicenow_incident
+    type: io.kestra.plugin.servicenow.Post
+    description: Create a ServiceNow incident ticket with healthcheck results.
+    domain: "dev343717"
+    username: "{{ secret(namespace=flow.namespace, key='servicenow_user') }}"
+    password: "{{ secret(namespace=flow.namespace, key='servicenow_pswd') }}"
+    table: incident
+    data:
+      short_description: "VM Healthcheck Report for {{ outputs.validate_payload.vars.vmName }}"
+      description: |
+        Healthcheck performed at {{ outputs.validate_payload["vars"]["receivedAt"] }}.
+        VM Name: {{ outputs.validate_payload.vars.vmName }}
+        Store ID: {{ outputs.validate_payload.vars.storeId }}
+        Request ID: {{ outputs.validate_payload.vars.requestId }}
+
+        Advice: {{ outputs.run_powershell_commands.vars }}
+
+      caller_id: "{{ outputs.validate_payload.vars.requestedBy }}"
+      priority: "{{ outputs.validate_payload.vars.sev }}" # Maps to ServiceNow Priority (1-5, lower is more severe)
+      category: "Hardware" # Example category, adjust as needed
+      subcategory: "Server" # Example subcategory, adjust as needed
+      contact_type: "Automated Tool"
+
+errors:
+  - id: create_servicenow_incident_on_error
+    type: io.kestra.plugin.servicenow.Post
+    description: Create a ServiceNow incident ticket on flow error.
+    domain: "dev343717"
+    username: "{{ secret(namespace=flow.namespace, key='servicenow_user') }}"
+    password: "{{ secret(namespace=flow.namespace, key='servicenow_pswd') }}"
+    table: incident
+    data:
+      short_description: "Kestra Flow Error: {{ flow.id }} (Execution: {{ execution.id }})"
+      description: |
+        Kestra Flow `{{ flow.namespace }}.{{ flow.id }}` failed.
+        Execution ID: `{{ execution.id }}`
+        Status: `{{ execution.state }}`
+        Error Message: `{{ errorLogs() }}`
+        View execution: {{ (serverUrl ?? 'http://localhost:8080') }}/ui/executions/{{ flow.namespace }}/{{ flow.id }}/{{ execution.id }}
+      caller_id: "kestra-automation@acme-retail.com" # Generic email for automated errors
+      priority: "1" # Critical priority for errors
+      category: "Software"
+      subcategory: "Application Error"
+      contact_type: "Automated Tool"
+  - id: send_slack_notification_on_error
+    type: io.kestra.plugin.slack.SlackExecution
+    description: Send a Slack notification on flow error.
+    url: "{{ secret(key='SLACK_WEBHOOK',namespace='system') }}"
+    messageText: |
+      🚨 Kestra Flow Error 🚨
+      Flow: `{{ flow.namespace }}.{{ flow.id }}`
+      Execution ID: `{{ execution.id }}`
+      Status: `{{ execution.state }}`
+      Error Message: `{{ errorLogs() }}`
+      View execution: {{ (serverUrl ?? 'http://localhost:8080') }}/ui/executions/{{ flow.namespace }}/{{ flow.id }}/{{ execution.id }}
+    allowFailure: true # Allow the notification to proceed even if Slack fails

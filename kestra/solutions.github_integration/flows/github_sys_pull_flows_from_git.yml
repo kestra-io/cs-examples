@@ -1,0 +1,71 @@
+id: github_sys_pull_flows_from_git
+namespace: system
+description: |
+  Pull Flows (YAML) from a Github Repo to Kestra.
+  ie: on PRs to main branch on git, sync flows to Kestra prod instance
+
+labels:
+  - key: demo
+    value: github_integration
+  - key: maintainer
+    value: pparvizi@kestra.io
+  - key: concepts 
+    value: nsfiles, SyncNamespaceFiles, NamespaceSync
+
+# ==== Flow Input Parameters =====
+# These params can be used if this Flow is run manually.
+inputs:
+  - id: branch
+    type: STRING
+    defaults: "kestra"
+  - id: namespace
+    type: STRING
+    defaults: "solutions.github_integration"
+
+# ==== Flow Triggers ====
+# How this flow is triggered to run:
+#  1- via a webhook call from Github Actions (ie: PRs to branch)
+#  2- On a regular schedule
+triggers:
+  - id: on_webhook
+    type: io.kestra.plugin.core.trigger.Webhook
+    key: "6c3uWPH8bzEaUZ"
+    disabled: false
+    
+  - id: on_15min_interval
+    type: io.kestra.plugin.core.trigger.Schedule
+    cron: "*/15 * * * *"
+    disabled: true
+
+
+tasks:
+  # ==== SyncFlows plugin ====
+  # this plugin sync Flows from a Git Repo to Kestra
+  - id: sync_flows
+    type: io.kestra.plugin.git.SyncFlows
+    url: "https://github.com/xdatanomad/kestra-demo.git"
+    username: xdatanomad
+    # Github Personal Access Token (PAT)
+    password: "{{ secret('github_token') }}"
+    gitDirectory: "kestra/solutions/github_integration/flows"
+    branch: "{{ inputs.branch }}"
+    targetNamespace: "{{ inputs.namespace }}"
+    dryRun: false
+
+  # # ==== NamespaceSync Kestra EE plugin ====
+  # # this plugin is only available in Kestra Enterprise Edition (EE)
+  # # **warning**: this plugin will sync both kestra Flows and Namespace
+  # # files. 
+  # - id: sync_namespace
+  #   type: io.kestra.plugin.git.NamespaceSync
+  #   sourceOfTruth: GIT
+  #   protectedNamespaces:
+  #     - system
+  #   url: "https://github.com/xdatanomad/kestra-demo.git"
+  #   username: xdatanomad
+  #   password: "{{ secret('github_token') }}"
+  #   gitDirectory: "kestra/solutions/github_integration/"
+  #   branch: "{{ inputs.branch }}"
+  #   namespace: "{{ inputs.namespace }}"
+  #   whenMissingInSource: KEEP
+  #   dryRun: true

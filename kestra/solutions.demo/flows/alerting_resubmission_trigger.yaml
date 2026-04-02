@@ -1,0 +1,51 @@
+id: alerting_resubmission_trigger
+namespace: solutions.demo
+
+labels:
+  maintainer: "pparvizi@kestra.io"
+  alerting: feature
+  notifications: feature
+  resubmission: feature
+
+tasks:
+  - id: log_failure
+    type: io.kestra.plugin.core.log.Log
+    message: |
+      Re-executing Flow: {{trigger.flowId ?? 'N/A'}} [{{trigger.executionId ?? 'N/A'}}]
+      labels: {{trigger.executionLabels}}
+
+  - id: sleep
+    type: io.kestra.plugin.core.flow.Sleep
+    duration: PT3S
+
+  - id: retry_subflow
+    type: io.kestra.plugin.core.flow.Subflow
+    flowId: "{{trigger.flowId}}"
+    namespace: "{{trigger.namespace}}"
+    wait: true
+    transmitFailed: false
+    labels: 
+      implicit: true
+    
+
+triggers:
+  - id: listen
+    type: io.kestra.plugin.core.trigger.Flow
+    disabled: true
+    conditions:
+      - type: io.kestra.plugin.core.condition.ExecutionStatus
+        in:
+          - FAILED
+          - WARNING
+
+      - type: io.kestra.plugin.core.condition.ExecutionNamespace
+        namespace: solutions.demo
+        prefix: true
+
+      - type: io.kestra.plugin.core.condition.ExecutionFlow
+        flowId: alerting_error_handling
+        namespace: solutions.demo
+
+      - type: io.kestra.plugin.core.condition.ExecutionLabels
+        labels: 
+          implicit: false

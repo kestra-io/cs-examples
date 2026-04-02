@@ -1,0 +1,83 @@
+id: data_load_example
+namespace: solutions.data
+description: |
+  Example of an event driven data pipeline in Kestra
+  1. Triggered on new data in Postgres
+  2. Data is written to both S3 and Databricks
+  3. Data aggregated in Postgres
+  4. Great Expectations library checks DQ of result set in DB
+
+labels:
+  - key: "maintainer"
+    value: "pgrainger@kestra.io"
+
+triggers:
+  - id: pg_trigger
+    type: io.kestra.plugin.jdbc.postgresql.Trigger
+    url: "{{secret('JDBC_CONNECTION_STRING')}}"
+    sql: "select * from staging_data"
+    interval: 120
+    fetchType: STORE
+  
+
+pluginDefaults:
+  - forced: false
+    type: io.kestra.plugin.databricks
+    values:
+      authentication:
+        token: "{{secret('DATABRICKS_TOKEN')}}"
+      host: "{{secret('DATABRICKS_HOST')}}"
+
+tasks:
+  - id: json
+    type: io.kestra.plugin.serdes.json.IonToJson
+    from: "{{trigger.uri}}"
+  - id: parallel
+    type: io.kestra.plugin.core.flow.Parallel
+    tasks:
+      - id: s3_store
+        type: io.kestra.plugin.aws.s3.Upload
+        accessKeyId: "{{secret(namespace='system',key='AWS_ACCESS_KEY')}}"
+        secretKeyId: "{{secret(namespace='system',key='AWS_SECRET_KEY')}}"
+        region: "eu-west-1"
+        from: "{{outputs.json.uri}}"
+        bucket: "kestra-ie"
+        key: '{{execution.startDate|date("yyyy-MM-dd-HH-mm-ss")}}/data/staging.json'
+      - id: databricks_store
+        type: io.kestra.plugin.databricks.dbfs.Upload
+        from: "{{outputs.json.uri}}"
+        to: /tmp/data.json    
+  - id: create_job
+    type: io.kestra.plugin.databricks.job.CreateJob
+    jobName: my-job
+    jobTasks:
+      - taskKey: my-task
+        runJobTask: 
+          jobId: "107325032652517"
+  - id: query_data_set
+    type: io.kestra.plugin.databricks.sql.Query
+    accessToken: "{{secret('DATABRICKS_TOKEN')}}"
+    httpPath: sql/protocolv1/o/2359170608155235/0424-144333-10bcfltt
+    sql: "select id, sum(qty) as qty from default.demo_table group by id"
+  - id: csv
+    type: io.kestra.plugin.serdes.csv.IonToCsv
+    from: "{{outputs.query_data_set.uri}}"
+  - id: check_data
+    type: io.kestra.plugin.scripts.python.Commands
+    namespaceFiles:
+      enabled: true
+    beforeCommands:
+      - pip install pandas kestra
+    commands:
+      - python dq.py --file "{{outputs.csv.uri}}"
+  - id: if
+    type: io.kestra.plugin.core.flow.If
+    condition: "{{outputs.check_data.vars['num_errors'] > 0}}"
+    then:
+      - id: log_warning
+        type: io.kestra.plugin.core.log.Log
+        level: WARN
+        message: There were {{outputs.check_data.vars['num_errors']}} data quality issues detected
+
+
+

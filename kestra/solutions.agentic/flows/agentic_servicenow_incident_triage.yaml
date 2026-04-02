@@ -1,0 +1,87 @@
+id: agentic_servicenow_incident_triage
+namespace: solutions.agentic
+description: using agentic flow to triage and automate ServiceNow incident response.
+
+labels:
+  maintainer: "pparvizi@kestra.io"
+  agentic: feature
+  servicenow: feature
+  itops-automation: feature
+  webhook: feature
+
+triggers:
+  - id: incident_trigger
+    type: io.kestra.plugin.core.trigger.Webhook
+    key: "{{secret('YOUR_WEBHOOK_TOKEN')}}"
+
+tasks:
+  - id: get_incidents
+    type: io.kestra.plugin.servicenow.Get
+    table: "incident"
+
+  - id: last_incident
+    type: io.kestra.plugin.core.debug.Return
+    format: "{{ outputs.get_incidents.results | jq('[ .[] | { sys_id, number, priority, short_description, description } ] | sort_by(.number) | last') | first }}"
+
+  - id: build_kb_rag
+    type: io.kestra.plugin.ai.rag.IngestDocument
+    embeddings:
+      type: io.kestra.plugin.ai.embeddings.KestraKVStore
+    provider:
+      type: io.kestra.plugin.ai.provider.GoogleGemini
+      modelName: gemini-embedding-exp-03-07
+    drop: true
+    fromDocuments:
+      - content: "{{ read('nsfile:///kb.md') }}"
+
+  - id: ask_ai
+    type: io.kestra.plugin.ai.rag.ChatCompletion
+    chatProvider:
+      type: io.kestra.plugin.ai.provider.GoogleGemini
+      modelName: gemini-2.5-flash
+    embeddingProvider:
+      type: io.kestra.plugin.ai.provider.GoogleGemini
+      modelName: gemini-embedding-exp-03-07
+    embeddings:
+      type: io.kestra.plugin.ai.embeddings.KestraKVStore
+    systemMessage: |
+      You are an Infra's SRE assistant. Use the provided KB and incident to propose concise triage steps.
+
+      - Always include "Risk", "Steps", and "Verification".
+      - Structure your response in formatted markdown sections.
+      - Simply ignore tickets not related to KB, produce only 'N/A'.
+    prompt: |
+      ServiceNow Incident JSON:
+      {{ outputs.last_incident.value }}
+
+      Produce:
+      - concise_summary
+      - work_notes (bullet list)
+      - proposed_resolution (one paragraph)
+
+  - id: log_incident_response
+    type: io.kestra.plugin.core.log.Log
+    message: "{{ outputs.ask_ai.textOutput }}"
+
+  - id: if_suggestion
+    type: io.kestra.plugin.core.flow.If
+    condition: "{{ (outputs.ask_ai.textOutput | trim | lower) != 'n/a' }}"
+    then:
+      - id: update_servicenow
+        type: io.kestra.plugin.servicenow.Update
+        table: "incident"
+        sysId: "{{ outputs.last_incident.value | jq('.sys_id') | first }}"
+        data:
+          comments: "{{ outputs.ask_ai.textOutput }}"
+
+pluginDefaults:
+  - type: io.kestra.plugin.ai.provider.GoogleGemini
+    values:
+      apiKey: "{{ secret(key='GEMINI_KEY', namespace='system') }}"
+      modelName: gemini-2.5-flash
+
+  - type: io.kestra.plugin.servicenow
+    values:
+      domain: "{{ secret('SERVICE_NOW_DOMAIN') }}"
+      username: "{{ secret('SERVICE_NOW_USER') }}"
+      password: "{{ secret('SERVICE_NOW_PASSWORD') }}"

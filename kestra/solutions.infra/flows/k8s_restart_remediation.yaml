@@ -1,0 +1,103 @@
+id: k8s_restart_remediation
+namespace: kestra.demo
+
+description: |
+  Restarts a K8s deployment. Uses the Get plugin for health verification and validation.
+
+labels:
+  - key: "maintainer"
+    value: "pparvizi@kestra.io"
+  - key: "feature"
+    value: "infra"
+  - key: "feature"
+    value: "k8s"
+
+triggers:
+  - id: alert_webhook
+    type: io.kestra.plugin.core.trigger.Webhook
+    key: "{{secret('YOUR_WEBHOOK_TOKEN')}}"
+
+variables:
+  namespace: "default"
+  deployment_name: null
+  allowed_namespaces: ["default", "staging", "production-canary"]
+
+tasks:
+  # --- STEP 1: GUARDRAILS ---
+  - id: parse_webhook_payload
+    type: io.kestra.plugin.core.execution.SetVariables
+    variables:
+      namespace: "{{ (trigger.parameters.namespace | first) ?? vars.namespace }}"
+      deployment_name: "{{ (trigger.parameters.deployment_name | first) ?? vars.deployment_name }}"
+
+  - id: log_params
+    type: io.kestra.plugin.core.log.Log
+    message: "namespace: {{vars.namespace}}, deployment:{{vars.deployment_name}}"
+    logLevel: DEBUG
+
+  - id: validate_namespace
+    type: io.kestra.plugin.core.flow.If
+    condition: "{{ (vars.deployment_name is null) or (not (vars.namespace isIn vars.allowed_namespaces)) }}"
+    then:
+      - id: fail_invalid_namespace
+        type: io.kestra.plugin.core.execution.Fail
+        errorMessage: |
+          Provide deployment name. Deployment name: {{ vars.deployment_name }}
+          Invalid namespace '{{ vars.namespace }}'. Allowed namespaces are: {{ vars.allowed_namespaces }}
+
+  # --- STEP 2: REMEDIATION ---
+  - id: restart_service
+    type: io.kestra.plugin.kubernetes.kubectl.Restart
+    namespace: "{{ vars.namespace }}"
+    resourceType: Deployment
+    resourcesNames: 
+      - "{{ vars.deployment_name }}"
+
+  # --- STEP 3: VERIFICATION (FETCH STATUS) ---
+  # We use the 'Get' plugin with FETCH_ONE to retrieve the deployment's status.
+  - id: get_deployment_status
+    type: io.kestra.plugin.kubernetes.kubectl.Get
+    namespace: "{{ vars.namespace }}"
+    resourceType: deployments
+    resourcesNames:
+      - "{{ vars.deployment_name }}"
+    fetchType: FETCH_ONE
+    # Retrying until the deployment is up & healthy
+    retry:
+      type: exponential
+      maxAttempts: 5
+      interval: PT15S
+      maxInterval: PT5M
+  
+  # --- STEP 4: VALIDATION LOG ---
+  - id: log_status
+    type: io.kestra.plugin.core.log.Log
+    message: |
+      Deployment Status: {{ outputs.get_deployment_status.statusItem | str }}
+
+  # --- STEP 5: SUCCESS NOTIFICATION ---
+  - id: notify_slack_success
+    type: io.kestra.plugin.slack.SlackIncomingWebhook
+    url: "{{ secret('SLACK_WEBHOOK_URL') }}"
+    messageText: >
+        **K8s Remediation Success** ✅
+        *Target:* {{ inputs.namespace }}/{{ inputs.deployment_name }}
+        *Status:* {{ outputs.get_deployment_status.statusItem | str }}
+      
+errors:
+  - id: notify_slack_failure
+    type: io.kestra.plugin.slack.notifications.SlackIncomingWebhook
+    url: "{{ secret('SLACK_WEBHOOK_URL') }}"
+    messageText: >
+      **K8s Remediation FAILED** ❌
+      *Target:* {{ inputs.namespace }}/{{ inputs.deployment_name }}
+      *Note:* The rollout did not complete or the service is still unhealthy.
+
+pluginDefaults:
+  - forced: false
+    type: io.kestra.plugin.kubernetes
+    values:
+      connection:
+        masterUrl: "{{ secret('K8S_MASTER_URL') }}"
+        caCertData: "{{ secret('K8S_CA_CERT_DATA') }}"
+        oauthToken: "{{ secret('K8S_OAUTH_TOKEN') }}"

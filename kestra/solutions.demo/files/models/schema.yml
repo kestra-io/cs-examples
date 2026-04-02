@@ -1,0 +1,30 @@
+version: 2
+
+models:
+  - name: market_data_5min
+    description: >
+      Aggregated market data in 5-minute intervals showing volume, VWAP, OHLC.
+    columns:
+      - name: symbol
+        description: Ticker symbol
+      - name: bucket_start
+        description: Start of the 5-minute interval
+      - name: total_quantity
+        description: Total quantity traded in the interval
+      - name: vwap_price
+        description: Volume weighted average price
+      - name: high_price
+        description: Highest trade price in the interval
+      - name: low_price
+        description: Lowest trade price in the interval
+      - name: open_price
+        description: First trade price in the interval
+      - name: close_price
+        description: Last trade price in the interval
+
+sources:
+  - name: demo
+    database: demo
+    schema: public
+    tables:
+      - name: trades

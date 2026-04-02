@@ -1,0 +1,59 @@
+id: alerting_error_handling
+namespace: solutions.demo
+
+labels: 
+  maintainer: "pparvizi@kestra.io"
+  alerting: feature
+  notifications: feature
+  error-handling: feature
+
+tasks:
+  - id: task_block
+    type: io.kestra.plugin.core.flow.Sequential
+    tasks:
+      - id: log_message
+        type: io.kestra.plugin.core.log.Log
+        message: A task to demo a job failing! 🚀
+
+      - id: fail_task
+        type: io.kestra.plugin.scripts.python.Script
+        
+        script: |
+          import random
+
+          if random.random() <= 0.99:
+            raise RuntimeError("Intentional - simulating task failure")
+
+    errors:
+      - id: log_error_seq_block
+        type: io.kestra.plugin.core.log.Log
+        message: |
+          task: {{task.id}}
+          taskrun: {{taskrun.id}} - {{taskrun.startDate}}
+          Debug Info: Sequential Block - Failure 
+          error: {{errorLogs()}}
+
+errors:
+  - id: log_error_flow
+    type: io.kestra.plugin.core.log.Log
+    message: |
+      task: {{task.id}}
+      taskrun: {{taskrun.id}} - {{taskrun.startDate}}
+      Debug Info: Flow Block - Failure
+      error: {{errorLogs()}}
+
+  - id: set_custom_vars
+    type: io.kestra.plugin.core.kv.Set
+    key: "{{flow.id}}-custom-label"
+    value: "marketing-report"
+    
+retry: 
+  behavior: RETRY_FAILED_TASK
+  maxAttempts: 2
+  type: constant
+  interval: PT1S
+
+triggers:
+  - id: webhook_call
+    type: io.kestra.plugin.core.trigger.Webhook
+    key: "{{secret('YOUR_WEBHOOK_TOKEN')}}"

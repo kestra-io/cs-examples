@@ -1,0 +1,93 @@
+id: patchOrchestration
+namespace: solutions.infra
+
+inputs:
+  - id: uatVM
+    type: STRING
+    defaults: dummy-uat
+    displayName: Name of the UAT VM
+  - id: prodVM
+    type: STRING
+    defaults: dummy-prod
+    displayName: Name of the Prod VM
+  - id: patchId
+    type: SELECT
+    expression: "{{ kv('approvedPacthes') }}"
+    defaults: "apt/focal-updates 2.0.11 amd64 [upgradable from: 2.0.10]"
+    displayName: Select the Patch to be applied
+tasks:
+  - id: processUatVM
+    type: io.kestra.plugin.core.flow.Subflow
+    namespace: solutions.infra
+    flowId: patchVM
+    inputs:
+      vmType: uat
+      vmName: "{{ inputs.uatVM }}"
+      patchId: "{{ inputs.patchId }}"
+    wait: true
+    transmitFailed: true
+    # outputs - actionPerformed, actionState, stateReason, actionCause
+  - id: processProdVM
+    type: io.kestra.plugin.core.flow.Subflow
+    runIf: "{{ outputs.processUatVM.outputs.actionPerformed == 'PATCH' and outputs.processUatVM.outputs.actionState == 'SUCCESS' }}"
+    namespace: solutions.infra
+    flowId: patchVM
+    inputs:
+      vmType: prod
+      vmName: "{{ inputs.prodVM }}"
+      action: patch
+      patchId: "{{ inputs.patchId }}"
+    wait: true
+    transmitFailed: true
+    # outputs - actionPerformed, actionState, stateReason, actionCause
+
+  - id: logResult
+    type: io.kestra.plugin.core.debug.Return
+    format: |
+      VM Patching Workflow Result
+      - UAT:
+         - VM Name: {{ inputs.uatVM }}
+         - Patch Applied: {{ outputs.processUatVM.outputs.actionPerformed == 'PATCH' ? 'Yes' : 'No'}}
+          - Reason: {{ outputs.processUatVM.outputs.actionCause}}
+      - Prod:
+          - VM Name: {{ inputs.prodVM }}
+          {% if outputs.processUatVM.outputs.actionPerformed != 'PATCH' %}
+          - Patch Applied: Stage Skipped
+          {% else %}
+          - Patch Applied: {{ outputs.processProdVM.outputs.actionPerformed == 'PATCH' ? 'Yes' : 'No'}}
+          - Reason: {{ outputs.processProdVM.outputs.actionCause}}
+          {% endif %}
+
+  - id: notifyResult
+    type: io.kestra.plugin.slack.notifications.SlackIncomingWebhook
+    url: "{{ secret(key='SLACK_WEBHOOK',namespace='system') }}"
+    messageText: |
+      VM Patching Workflow Result
+      - UAT:
+         - VM Name: {{ inputs.uatVM }}
+         - Patch Applied: {{ outputs.processUatVM.outputs.actionPerformed == 'PATCH' ? 'Yes' : 'No'}}
+          - Reason: {{ outputs.processUatVM.outputs.actionCause}}
+      - Prod:
+          - VM Name: {{ inputs.prodVM }}
+          {% if outputs.processUatVM.outputs.actionPerformed != 'PATCH' %}
+          - Patch Applied: Stage Skipped
+          {% else %}
+          - Patch Applied: {{ outputs.processProdVM.outputs.actionPerformed == 'PATCH' ? 'Yes' : 'No'}}
+          - Reason: {{ outputs.processProdVM.outputs.actionCause}}
+          {% endif %}
+outputs:
+  - id: result
+    type: STRING
+    value: "{{ outputs.logResult.value }}"
+
+labels:
+  - key: feature
+    value: app
+  - key: feature
+    value: ssh
+  - key: domain
+    value: infra
+  - key: maintainer
+    value: fqazi@kestra.io
+  - key: kestra.version
+    value: 1.0.8

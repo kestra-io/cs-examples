@@ -1,0 +1,34 @@
+id: solutions_infra_patchVM
+type: io.kestra.plugin.ee.apps.Execution
+namespace: solutions.infra
+displayName: Patch VM
+thumbnail: nsFile:///patchVM/icon.svg
+flowId: patchVM
+
+access:
+  type: PRIVATE
+
+layout:
+  - on: RUNNING
+    blocks:
+      - type: io.kestra.plugin.ee.apps.core.blocks.Markdown
+        content: |
+          ## Execution is in progress.
+      - type: io.kestra.plugin.ee.apps.core.blocks.Loading
+      - type: io.kestra.plugin.ee.apps.execution.blocks.Logs
+      - type: io.kestra.plugin.ee.apps.execution.blocks.CancelExecutionButton
+        text: Cancel request
+  - on: SUCCESS
+    blocks:
+      - type: io.kestra.plugin.ee.apps.core.blocks.Markdown
+        content: |
+          ## Execution successfully completed
+      - type: io.kestra.plugin.ee.apps.core.blocks.Alert
+        style: SUCCESS
+        showIcon: true
+        content: Your execution outputs
+      - type: io.kestra.plugin.ee.apps.execution.blocks.Outputs
+  - on: PAUSE
+    blocks:
+      - type: io.kestra.plugin.ee.apps.execution.blocks.ResumeExecutionForm
+      - type: io.kestra.plugin.ee.apps.execution.blocks.ResumeExecutionButton

@@ -1,0 +1,87 @@
+id: control-1-1_6-1_6_4
+namespace: solutions.infra
+
+labels:
+  - key: "domain"
+    value: "infra"
+  - key: "maintainer"
+    value: "fqazi@kestra.io"
+  - key: "kestra.version"
+    value: "0.24.0"
+  - key: "feature"
+    value: "ssh"
+
+inputs:
+  - id: remediateControls
+    description: To auto remediate non compliant controls, toggle ON.
+    displayName: Auto Remediate
+    type: BOOL
+    defaults: true
+
+  - id: ipAddress
+    type: STRING
+    defaults: localhost
+
+variables:
+  COMPLIANT: Compliant
+  NOT_COMPLIANT: Not Compliant
+
+tasks:
+  # get configuration from kv store
+  - id: getConfiguration
+    type: io.kestra.plugin.core.kv.Get
+    key: "{{ render(flow.id) }}"
+
+  # check the current setting in VM
+  - id: assess-1_6_4
+    type: io.kestra.plugin.fs.ssh.Command
+    host: "{{ inputs.ipAddress }}"
+    authMethod: PUBLIC_KEY
+    username: "{{ secret('SSH_VM_USER') }}"
+    privateKey: "{{ secret('SSH_PVT_KEY') }}"
+    commands:
+      - "echo $([ -e /etc/motd ] && stat -Lc 'Access: (%#a/%A)  Uid: ( %u/ %U) Gid: { %g/ %G)' /etc/motd ) > output.log"
+      - echo '::{"outputs":{"result":"'$(cat output.log)'"}}::'
+
+  - id: status-1_6_4
+    type: io.kestra.plugin.core.flow.Switch
+    value: '{{ outputs["assess-1_6_4"]["vars"]["result"] }}'
+    # check if the configuration is compliant
+    cases:
+      "{{ outputs.getConfiguration.value }}":
+        - id: compliant-1_6_4_a
+          type: io.kestra.plugin.core.debug.Return
+          format: "{{ vars.COMPLIANT }}"
+      "":
+        - id: compliant-1_6_4_b
+          type: io.kestra.plugin.core.debug.Return
+          format: "{{ vars.COMPLIANT }}"
+    defaults:
+      # remediate if remediation enabled
+      - id: doRemediate
+        type: io.kestra.plugin.core.flow.If
+        condition: "{{ inputs.remediateControls == true }}"
+        then:
+          - id: remediate-1_6_4
+            type: io.kestra.plugin.fs.ssh.Command
+            host: "{{ inputs.ipAddress }}"
+            username: "{{ kv('SSH_VM_USER') }}"
+            privateKey: "{{ kv('SSH_PVT_KEY') }}"
+            authMethod: PUBLIC_KEY
+            commands:
+              - echo Not compliant. Current Value-{{ outputs["assess-1_6_4"]["vars"]["result"] }}. Performing Remediation.
+              - chown root:root $(readlink -e /etc/motd)
+              - chmod u-x,go-wx $(readlink -e /etc/motd)
+              - echo Remediation Complete
+          - id: remediateResult-1_6_4
+            type: io.kestra.plugin.core.debug.Return
+            format: "{{ vars.COMPLIANT }}"
+        else:
+          - id: not-compliant-1_6_4
+            type: io.kestra.plugin.core.debug.Return
+            format: "{{ vars.NOT_COMPLIANT }}"
+
+outputs:
+  - id: complianceStatus-1_6_4
+    type: STRING
+    value: '{{ outputs["compliant-1_6_4_a"]["value"] ?? outputs["compliant-1_6_4_b"]["value"] ?? outputs["remediateResult-1_6_4"]["value"] ?? outputs["not-compliant-1_6_4"]["value"] ?? "Error" }}'

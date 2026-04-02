@@ -1,0 +1,26 @@
+name: sync_kestra_flows_on_prs_and_pushes
+
+on:
+  push: 
+    # Triggers on commits to the main branch
+    branches:
+      - main  
+  pull_request:
+    types: [closed]  # Only trigger when PRs are closed (merged)
+    branches:
+      - main
+
+jobs:
+  trigger-kestra:
+    runs-on: ubuntu-latest   
+    steps: 
+      - name: send_kestra_webhook
+        run: |
+          curl -X POST "https://partners.kestra.cloud/api/v1/demo/executions/webhook/system/github_sys_pull_flows_from_git/${{ secrets.KESTRA_WEBHOOK_KEY }}" \
+          -H "Content-Type: application/json" \
+          -d '{
+            "commit_sha": "${{ github.sha }}",
+            "ref": "${{ github.ref }}",
+            "actor": "${{ github.actor }}",
+            "message": "Triggered by GitHub Action"
+          }'

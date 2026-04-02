@@ -1,0 +1,89 @@
+id: csr
+namespace: solutions.infra
+description: |
+  Performs Compliance Scan and Remediation on the Selected VM
+
+labels:
+  - key: "domain"
+    value: "infra"
+  - key: "maintainer"
+    value: "fqazi@kestra.io"
+  - key: "kestra.version"
+    value: "0.24.0"
+  - key: "feature"
+    value: "webhook"
+
+inputs:
+  - id: remediateControls
+    description: To auto remediate non compliant controls, toggle ON.
+    displayName: Auto Remediate
+    type: BOOL
+    defaults: true
+
+  - id: ipAddress
+    displayName: IP Address
+    description: Host on which scan must be performed.
+    type: STRING
+    defaults: localhost
+
+tasks:
+  - id: section-1-1_6
+    type: io.kestra.plugin.core.flow.Parallel
+    # the reason tasks are set to run in parallel and concurrency is set to 1
+    # is because we want to be able to retrigger any task individually if required
+    # and to avoid retriggering of downstream tasks which dont need it
+    concurrent: 1
+    tasks:
+      - id: trigger-1-1_6-1_6_4
+        type: io.kestra.plugin.core.flow.Sequential
+        tasks:
+          - id: control-1-1_6-1_6_4
+            type: io.kestra.plugin.core.flow.Subflow
+            namespace: "{{ flow.namespace }}"
+            flowId: control-1-1_6-1_6_4
+            inputs:
+              ipAddress: "{{ trigger.body.ipAddress ?? inputs.ipAddress }}"
+              remediateControls: "{{ inputs.remediateControls }}"
+            wait: true
+            transmitFailed: true
+
+          - id: logStatus-1-1_6-1_6_4
+            type: io.kestra.plugin.core.log.Log
+            message: "{{ outputs['control-1-1_6-1_6_4'].outputs['complianceStatus-1_6_4'] }}"
+
+      - id: trigger-1-1_6-1_6_5
+        type: io.kestra.plugin.core.flow.Sequential
+        tasks:
+          - id: control-1-1_6-1_6_5
+            type: io.kestra.plugin.core.flow.Subflow
+            namespace: "{{ flow.namespace }}"
+            flowId: control-1-1_6-1_6_5
+            inputs:
+              ipAddress: "{{ trigger.body.ipAddress ?? inputs.ipAddress }}"
+              remediateControls: "{{ inputs.remediateControls }}"
+            wait: true
+            transmitFailed: true
+
+          - id: logStatus-1-1_6-1_6_5
+            type: io.kestra.plugin.core.log.Log
+            message: "{{ outputs['control-1-1_6-1_6_5'].outputs['complianceStatus-1_6_5'] }}"
+
+triggers:
+  # disabled because port 22 disabled on GCP firewall
+  # demonstrate on containers if required
+  - id: vmCreateFromServiceNow
+    type: io.kestra.plugin.core.trigger.Webhook
+    key: "{{ secret('webHookTriggerSecret') }}"
+    disabled: true
+  - id: postVMCreation
+    type: io.kestra.plugin.core.trigger.Flow
+    disabled: true
+    inputs:
+      ipAddress: "{{ trigger.outputs.externalIPAddress }}"
+    preconditions:
+      id: vmCreationSuccess
+      flows:
+        - namespace: solutions.infra
+          flowId: createVM
+          states: [SUCCESS, WARNING]
+disabled: false

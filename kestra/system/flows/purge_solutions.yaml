@@ -1,0 +1,20 @@
+id: purge_solutions
+namespace: system
+description: |
+  This flow will remove all executions and logs older than inputs days.
+
+inputs:
+  - id: namespace
+    type: STRING
+
+tasks:
+  - id: purge_executions
+    type: io.kestra.plugin.core.execution.PurgeExecutions
+    endDate: "{{ now() | dateAdd(-1, 'DAYS') }}"
+    purgeLog: false
+    namespace: "{{inputs.namespace}}"
+
+  - id: purge_logs
+    type: io.kestra.plugin.core.log.PurgeLogs
+    endDate: "{{ now() | dateAdd(-1, 'DAYS') }}"
+    namespace: "{{inputs.namespace}}"

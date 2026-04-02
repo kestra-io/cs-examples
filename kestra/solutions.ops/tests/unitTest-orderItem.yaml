@@ -1,0 +1,179 @@
+id: unitTest-orderItem
+flowId: orderItem
+namespace: solutions.ops
+description: |
+  Test ID                       Scenario 
+  `validProductInStock`         Product is available
+  `validProductLowStock`       Product has low stock
+  `validProductDiscontinued`   Product is Discontinued
+  `invalidProduct`             Product lookup fails (404)
+testCases:
+  - id: validProductInStock
+    type: io.kestra.core.tests.flow.UnitTest
+    description: |
+      Test Case Expectation
+      Valid product + "In Stock" = Runs orderItem, skips sendRestockAlert
+    fixtures:
+      inputs:
+        category: fragrances
+        product: Calvin Klein CK One
+      tasks:
+        - id: getProductId
+          outputs:
+            value: "6"
+        - id: getProductDetails
+          outputs:
+            "code": 200
+            "body": |
+              {
+                "availabilityStatus": "In Stock"
+              }
+        - id: waitForApproval
+          outputs:
+            onResume:
+              approved: true
+              team: IT
+              reason: I am the boss
+        - id: sendToVendor
+          outputs:
+            value: |
+              Order request for Calvin Klein CK One under Cost Center: IT, has been approved.
+              Reason: I am the boss
+              Proceed with invoicing.
+        - id: sendPurchaseOrderForFinanceApproval
+          outputs:
+            outputs:
+              managerApproved: true
+              managerComments: Swag
+
+    assertions:
+      - taskId: checkOrderPlaced
+        description: Checks whether order was placed
+        value: "{{ outputs.orderItem.value }}"
+        equalTo: "Product {{ inputs.product }} Ordered Successfully"
+        errorMessage: "Order not placed"
+
+      - taskId: checkRestockAlertSkipped
+        description: Checks whether alert was skipped
+        value: "{{ printContext().tasks.sendRestockAlert.state }}"
+        equalTo: "SKIPPED"
+        errorMessage: "Restock Alert skipped"
+
+  - id: validProductLowStock
+    type: io.kestra.core.tests.flow.UnitTest
+    description: |
+      Test Case Expectation
+      Valid product + "Low Stock" = Runs orderItem, skips sendRestockAlert
+    fixtures:
+      inputs:
+        category: fragrances
+        product: Dolce Shine Eau de
+      tasks:
+        - id: getProductId
+          outputs:
+            value: "9"
+        - id: getProductDetails
+          outputs:
+            "code": 200
+            "body": |
+              {
+                "availabilityStatus": "Low Stock"
+              }
+        - id: waitForApproval
+          outputs:
+            onResume:
+              approved: true
+              team: IT
+              reason: I am the boss
+        - id: sendToVendor
+          outputs:
+            value: |
+              Order request for Dolce Shine Eau de under Cost Center: IT, has been approved.
+              Reason: I am the boss
+              Proceed with invoicing.
+        - id: sendPurchaseOrderForFinanceApproval
+          outputs:
+            outputs:
+              managerApproved: true
+              managerComments: Swag
+
+    assertions:
+      - taskId: checkOrderPlaced
+        description: Checks whether order was placed
+        value: "{{ outputs.orderItem.value }}"
+        equalTo: "Product {{ inputs.product }} Ordered Successfully"
+        errorMessage: "Order not placed"
+
+      - taskId: checkRestockAlert
+        description: Checks whether restock alert was sent
+        value: "{{ outputs.sendRestockAlert.value }}"
+        equalTo: "Restock Alert for {{ inputs.product }} sent successfully!"
+        errorMessage: "Restock Alert not sent"
+
+  - id: validProductDiscontinued
+    type: io.kestra.core.tests.flow.UnitTest
+    description: |
+      Test Case Expectation
+      Valid product + "Discontinued" Skips both
+    fixtures:
+      inputs:
+        category: fragrances
+        product: Dolce Shine Eau de
+      tasks:
+        - id: getProductId
+          outputs:
+            value: "9"
+        - id: getProductDetails
+          outputs:
+            "code": 200
+            "body": |
+              {
+                "availabilityStatus": "Discontinued"
+              }
+        - id: cancelOrder
+          outputs:
+            value: "Failed to order 'Dolce Shine Eau de'. HTTP Status: 200"
+
+    assertions:
+      - taskId: checkOrderSkipped
+        description: Checks whether order was skipped
+        value: "{{ printContext().tasks.cancelOrder.state }}"
+        equalTo: "SUCCESS"
+        errorMessage: "Order skipped"
+
+      - taskId: checkRestockAlertSkipped
+        description: Checks whether alert was skipped
+        value: "{{ printContext().outputs.processOrder.evaluationResult }}"
+        equalTo: false
+        errorMessage: "Restock Alert skipped"
+
+  - id: invalidProduct
+    type: io.kestra.core.tests.flow.UnitTest
+    description: |
+      Test Case Expectation
+      Invalid product / fetch fails = Runs cancelOrder only
+    fixtures:
+      inputs:
+        category: fragrances
+        product: Fake Dolce Shine Eau
+      tasks:
+        - id: getProductId
+          outputs:
+            value: "-1"
+        - id: getProductDetails
+          outputs:
+            "code": 404
+            "body": |
+              {
+                "message": "Product with id '-1' not found"
+              }
+        - id: cancelOrder
+          outputs:
+            value: "Failed to order 'Fake Dolce Shine Eau'. HTTP Status: 404"
+
+    assertions:
+      - taskId: checkOrderCancelled
+        description: Checks whether order was cancelled
+        value: "{{ outputs.cancelOrder.value }}"
+        equalTo: "Failed to order '{{ inputs.product }}'. HTTP Status: {{ outputs.getProductDetails.code }}"
+        errorMessage: "Order not cancelled"

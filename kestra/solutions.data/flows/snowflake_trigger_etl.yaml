@@ -1,0 +1,74 @@
+id: snowflake_trigger_etl
+namespace: solutions.data
+
+concurrency:
+  behavior: QUEUE
+  limit: 1
+labels:
+  - key: "maintainer"
+    value: "pgrainger@kestra.io"
+triggers:
+  - id: sf
+    type: io.kestra.plugin.jdbc.snowflake.Trigger
+    interval: "PT5M"
+    url: "{{secret('SNOWFLAKE_HOST')}}"
+    privateKey: "{{secret('SNOWFLAKE_KEY')}}"
+    privateKeyFilePassword: "{{secret('SNOWFLAKE_KEY_PASSWORD')}}"
+    sql: "select * from streams.my_snowflake_stream"
+    warehouse: COMPUTE_WH
+    fetchType: STORE
+
+retry:
+  type: constant
+  behavior: RETRY_FAILED_TASK
+  maxAttempt: 3
+  interval: "PT5S"
+
+errors:
+  - id: slack
+    type: io.kestra.plugin.core.flow.Subflow
+    namespace: solutions.notifications
+    flowId: slack_alert
+    inputs:
+      text: |
+        Failed flow {{flow.namespace}}.{{flow.id}} id: {{execution.id}}. Please see details here: 
+          https://partners.kestra.cloud/ui/demo/executions/{{flow.namespace}}/{{flow.id}}/{{execution.id}}/logs
+
+tasks:
+  - id: each
+    type: io.kestra.plugin.core.flow.ForEach
+    values: "{{trigger.rows}}"
+    concurrencyLimit: 2
+    tasks:    
+    - id: jsonToIon
+      type: io.kestra.plugin.serdes.json.JsonToIon
+      from: "{{taskrun.value}}"
+      newLine: false
+    - id: insert_raw_data
+      type: io.kestra.plugin.jdbc.postgresql.Batch
+      from: "{{outputs.jsonToIon[taskrun.value].uri}}"
+      url: "{{secret('JDBC_CONNECTION_STRING')}}"
+      username: "{{secret('PG_USERNAME')}}"
+      password: "{{secret('PG_PASSWORD')}}"
+      sql: |
+        insert into kestraDemoRaw(id,qty,val,created_at) values(?,?,?,?)
+    - id: dbt
+      type: io.kestra.plugin.dbt.cli.Run
+      dbtPath: /usr/local/bin/dbt
+      containerImage: ghcr.io/kestra-io/dbt-postgres
+      namespaceFiles:
+        enabled: true
+      profiles: |
+        kestraDemo:
+          target: dev
+          outputs:
+            dev:
+              type: postgres
+              host: "{{secret('PG_HOST')}}"
+              user: "{{secret('PG_USERNAME')}}"
+              password: "{{secret('PG_PASSWORD')}}"
+              port: {{secret('PG_PORT')}}
+              dbname: kestra
+              schema: public
+              threads: 1
+

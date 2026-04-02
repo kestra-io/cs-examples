@@ -1,0 +1,77 @@
+id: solutions_ops_approversApp
+type: io.kestra.plugin.ee.apps.Execution
+displayName: Form to approve Execution Requests
+namespace: solutions.ops
+flowId: approversApp
+
+access:
+  type: PRIVATE
+tags:
+  - dummy
+
+layout:
+  - on: OPEN
+    blocks:
+      - type: io.kestra.plugin.ee.apps.core.blocks.Markdown
+        content: |
+          ## Request data
+          Select the executions you want to approve.
+      - type: io.kestra.plugin.ee.apps.execution.blocks.CreateExecutionForm
+      - type: io.kestra.plugin.ee.apps.execution.blocks.CreateExecutionButton
+        text: Submit
+
+  - on: RUNNING
+    blocks:
+      - type: io.kestra.plugin.ee.apps.core.blocks.Markdown
+        content: |
+          ## Fetching your data...
+          Don't close this window. The results will be displayed as soon as the processing is complete.
+
+      - type: io.kestra.plugin.ee.apps.core.blocks.Loading
+      - type: io.kestra.plugin.ee.apps.execution.blocks.Logs
+      - type: io.kestra.plugin.ee.apps.execution.blocks.CancelExecutionButton
+        text: Cancel request
+
+  - on: SUCCESS
+    blocks:
+      - type: io.kestra.plugin.ee.apps.core.blocks.Markdown
+        content: |
+          Request processed successfully
+
+      - type: io.kestra.plugin.ee.apps.execution.blocks.Inputs
+      - type: io.kestra.plugin.ee.apps.execution.blocks.Logs
+      - type: io.kestra.plugin.ee.apps.core.blocks.Alert
+        style: SUCCESS
+        showIcon: true
+        content: The Flows have been approved!
+
+      - type: io.kestra.plugin.ee.apps.execution.blocks.Outputs
+
+description: |
+  This app is intended to request data and download it. Example flow:
+    ```yaml
+    id: get_data
+    namespace: solutions.ops
+
+    inputs:
+      - id: data
+        displayName: Select Data to Download
+        type: SELECT
+        values: [customers, employees, products, stores, suppliers]
+        defaults: customers
+
+      - id: startDate
+        displayName: Start Date for your dataset
+        type: DATE
+        defaults: 2024-12-03
+
+    tasks:
+      - id: extract
+        type: io.kestra.plugin.core.http.Download
+        uri: https://huggingface.co/datasets/kestra/datasets/resolve/main/ion/{{ inputs.data }}.ion
+
+    outputs:
+      - id: data
+        type: FILE
+        value: "{{ outputs.extract.uri }}"
+    ```

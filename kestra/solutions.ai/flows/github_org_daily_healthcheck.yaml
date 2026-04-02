@@ -1,0 +1,225 @@
+id: github_org_daily_healthcheck
+namespace: solutions.ai
+description: >
+  Webhook → Parallel GitHub calls → Python filtering & KPIs → flaky task with reties → AI summary → Slack on failure, with SLA.
+labels:
+  - key: "maintainer"
+    value: "pgrainger@kestra.io"
+inputs:
+  - id: github_repo
+    type: STRING
+    defaults: kestra-io/kestra
+    required: true
+  - id: window_hours
+    type: INT
+    defaults: 12
+    required: true
+
+tasks:
+  - id: say_hello
+    type: io.kestra.plugin.core.log.Log
+    message: |
+      Hello! 🚀
+      Checking github activity on {{inputs.github_repo}}
+
+  - id: run_parallel
+    type: io.kestra.plugin.core.flow.Parallel
+    allowFailure: true
+    tasks:
+      # issues
+      - id: github_issues
+        type: io.kestra.plugin.core.http.Request
+        uri: "https://api.github.com/repos/{{inputs.github_repo}}/issues?per_page=20&state=all&sort=updated&direction=desc"
+
+      
+      # PRs
+      - id: github_prs
+        type: io.kestra.plugin.core.http.Request
+        uri: "https://api.github.com/repos/{{inputs.github_repo}}/pulls?per_page=20&state=all&sort=updated&direction=desc"
+        method: GET
+
+      # Actions workflow runs
+      - id: github_actions
+        type: io.kestra.plugin.core.http.Request
+        uri: "https://api.github.com/repos/{{inputs.github_repo}}/actions/runs?per_page=20"
+        method: GET
+
+  # Concatenate API calls      
+  - id: concatenate_data
+    type: io.kestra.plugin.core.storage.Write
+    content: |
+      {
+        "issues": {{outputs.github_issues.body ?? '[]'}},
+        "prs": {{outputs.github_prs.body ?? '[]'}},
+        "actions": {{outputs.github_actions.body ?? '[]'}}
+      }
+    extension: ".json"
+
+  # Filter & prep API data
+  - id: filter_prep_metrics
+    type: io.kestra.plugin.scripts.python.Script
+    dependencies:
+      - kestra
+    script: |
+      import json
+      import datetime as dt
+      from kestra import Kestra
+
+      def within_window(iso, since):
+        try:
+            t = dt.datetime.fromisoformat(iso.replace("Z","+00:00"))
+            return t >= since
+        except Exception:
+            return False
+      
+      hours = int("{{inputs.window_hours}}")
+      since = dt.datetime.now(dt.timezone.utc) - dt.timedelta(hours=hours)
+      issues, prs, actions = [], [], []
+      logger = Kestra.logger()
+      with open("{{outputs.concatenate_data.uri}}") as f:
+        try:
+          payload  = json.load(f)
+          issues   = payload['issues']  if 'issues'  in payload else []
+          prs      = payload['prs']     if 'prs'     in payload else []
+          actions  = payload['actions'] if 'actions' in payload else []
+          logger.info(f"issues: {len(issues)}, prs: {len(prs)}, actions: {len(actions)}")
+        except Exception as err:
+          raise err
+      select_fields = ('title', 'body', 'created_at', 'user', 'state', 'html_url', 'reactions', 'pull_request', 'merged_at', 'updated_at')
+      issues = [{k: (v if k != 'user' else v['login']) for k, v in x.items() if k in select_fields} for x in issues if within_window(x.get('created_at', ''), since)]
+      prs    = [{k: (v if k != 'user' else v['login']) for k, v in x.items() if k in select_fields} for x in prs if within_window(x.get('created_at', ''), since)]
+      actions = [{
+        "run_number": item.get("run_number"),
+        "name": item.get("name") or item.get("display_title"),
+        "event": item.get("event"),
+        "status": item.get("status"),
+        "conclusion": item.get("conclusion"),
+        "started_at": item.get("run_started_at") or item.get("created_at"),
+        "actor": (item.get("actor") or {}).get("login"),
+        "url": item.get("html_url"),
+        "pr_numbers": [pr.get("number") for pr in item.get("pull_requests", []) if isinstance(pr, dict)],
+        "commit_message": (item.get("head_commit", {}) or {}).get("message", "").splitlines()[0] if item.get("head_commit") else None,
+      } for item in actions.get('workflow_runs', []) if within_window(item.get('updated_at',''), since)]
+      new_issues    = [i for i in issues if 'pull_request' not in i and i.get('state') == 'open']
+      closed_issues = [i for i in issues if 'pull_request' not in i and i.get('state') == 'closed']
+      opened_prs    = [p for p in prs if p.get('state') in ('open','closed')]
+      merged_prs    = [p for p in prs if p.get('merged_at')]
+      failed_runs   = [r for r in actions if r.get('conclusion') in ('failure','cancelled','timed_out')]
+      Kestra.outputs(
+        {
+          "new_issues": new_issues,
+          "closed_issues": closed_issues,
+          "opened_prs": opened_prs,
+          "merged_prs": merged_prs,
+          "failed_runs": failed_runs,
+        }
+      )
+
+  # A flasky task the fails 50% of the time
+  - id: flaky_task
+    type: io.kestra.plugin.scripts.python.Script
+    script: |
+      import random
+      p = random.random()
+      # if p < 0.50:
+      #    raise RuntimeError("Simulated transient error")
+    retry:
+      type: constant
+      interval: PT2S
+      maxAttempts: 6
+
+  # AI Agent generates a “day brief”
+  - id: ai_day_brief
+    type: io.kestra.plugin.ai.agent.AIAgent
+    systemMessage: |
+      You are a concise assistant. 
+      Use the provided JSON to write a short, friendly daily summary of github repo activity.
+      - Include only **MOST** pressing items.
+      - Keep it to 15 items. 
+      - Include github issue or PR ids.
+      - Include a concise and short snippet of the underlying data.
+      - Format response in markdown.
+      - Include following heading section: new issues, closed issues, open prs, merged prs, failed runs.
+      - Produce nicely readable output.
+
+      After the summary, propose a quick plan of attach for our dev team under a section heading "Plan of Attack"
+    prompt: |
+      Repo: {{ inputs.github_repo }}
+      time window: last {{ inputs.window_hours}}hrs
+
+      new issues: {{outputs.filter_prep_metrics.vars['new_issues'] ?? 'None'}}
+      ---
+      closed issues: {{outputs.filter_prep_metrics.vars['closed_issues'] ?? 'None'}}
+      ---
+      opened prs: {{outputs.filter_prep_metrics.vars['opened_prs'] ?? 'None'}}
+      ---
+      merged prs: {{outputs.filter_prep_metrics.vars['merged_prs'] ?? 'None'}}
+      ---
+      failed runs: {{outputs.filter_prep_metrics.vars['failed_runs'] ?? 'None'}}
+  
+  # Log outputs:
+  - id: log_output
+    type: io.kestra.plugin.core.log.Log
+    message: |
+     🤖: 
+     {{ outputs.ai_day_brief.textOutput }}
+
+  - id: post_to_slack
+    type: io.kestra.plugin.slack.notifications.SlackIncomingWebhook
+    url: "{{ secret(key='SLACK_WEBHOOK',namespace='system') }}"
+    messageText: "{{outputs.ai_day_brief.textOutput}}"
+
+
+errors:
+  # Error Handling - Put a message on Slack if anything fails!
+  - id: slack_fail
+    type: io.kestra.plugin.slack.notifications.SlackIncomingWebhook
+    url: "{{ secret(key='SLACK_WEBHOOK',namespace='system') }}"
+    messageText: ":rotating_light: Flow {{ flow.id }} - Error: {{ error.message }}"
+
+sla:
+  # Task SLA: Fail the task if exceeding allowed execution time!
+  - id: must_finish_fast
+    type: MAX_DURATION
+    duration: PT10M
+    behavior: CANCEL
+    labels:
+      sla: miss
+      reason: "Exceeded allowed execution time"
+
+outputs:
+  - id: brief
+    type: STRING
+    value: "{{ outputs.ai_day_brief.textOutput }}"
+
+
+pluginDefaults:
+  # LLM agent defaults
+  - type: io.kestra.plugin.ai.agent.AIAgent
+    values:
+      provider:
+        type: io.kestra.plugin.ai.provider.GoogleGemini
+        modelName: gemini-2.5-flash-lite
+        apiKey: "{{ secret(key='GEMINI_KEY', namespace='system') }}"
+      allowFailure: true
+      configuration:
+        chatConfiguration:
+          logRequests: true
+      retry: 
+        type: constant
+        interval: PT2s
+        maxAttempts: 1
+
+  # HTTP Request defaults
+  - type: io.kestra.plugin.core.http.Request
+    values:
+      headers:
+        Accept: "application/json"
+      allowFailure: true
+      retry: 
+        type: exponential
+        interval: PT1S
+        maxInterval: PT10S
+        maxAttempts: 3
+
+    

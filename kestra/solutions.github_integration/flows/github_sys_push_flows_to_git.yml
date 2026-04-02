@@ -1,0 +1,74 @@
+id: github_sys_push_flows_to_git
+namespace: system
+description: |
+  Push Kestra Flows (YAML) to a Github Repo.
+
+labels:
+  - key: demo
+    value: github_integration
+  - key: maintainer
+    value: pparvizi@kestra.io
+  - key: concepts 
+    value: PushFlows, NamespaceSync
+
+# ==== Flow Input Parameters =====
+# These params can be used if this Flow is run manually.
+inputs:
+  - id: branch
+    type: STRING
+    defaults: "kestra"
+  - id: namespace
+    type: STRING
+    defaults: "solutions.github_integration"
+
+# ==== Flow Triggers ====
+# How this flow is triggered to run:
+#  1- On a regular schedule
+#  2- On every execution of Flows within a namespace
+triggers:   
+  - id: on_15min_interval
+    type: io.kestra.plugin.core.trigger.Schedule
+    cron: "*/15 * * * *"
+    disabled: true
+
+  - id: on_flow_execution_in_namespace
+    type: io.kestra.plugin.core.trigger.Flow
+    disabled: true
+    preconditions:
+      id: filter_namespace
+      flows:
+        - namespace: solutions.github_integration
+          states: [CREATED, SUCCESS, FAILED]
+
+tasks:
+  # ==== PushFlows plugin ====
+  # this plugin pushes Kestra Flows (YAML) to a github repo
+  - id: push_flows
+    type: io.kestra.plugin.git.PushFlows
+    url: "https://github.com/xdatanomad/kestra-demo.git"
+    username: xdatanomad
+    # Your github Personal Access Token (PAT)
+    password: "{{ secret('github_token') }}"
+    gitDirectory: "kestra/solutions/github_integration/flows"
+    branch: "{{ inputs.branch }}"
+    sourceNamespace: "{{ inputs.namespace }}"
+    commitMessage: "kestra sys:: adding kestra flows"
+    dryRun: false
+
+  # # ==== NamespaceSync Kestra EE plugin ====
+  # # this plugin is only available in Kestra Enterprise Edition (EE)
+  # # **warning**: this plugin will sync both kestra Flows and Namespace
+  # # files. 
+  # - id: sync_namespace
+  #   type: io.kestra.plugin.git.NamespaceSync
+  #   sourceOfTruth: KESTRA
+  #   protectedNamespaces:
+  #     - system
+  #   url: "https://github.com/xdatanomad/kestra-demo.git"
+  #   username: xdatanomad
+  #   password: "{{ secret('github_token') }}"
+  #   gitDirectory: "kestra/solutions/github_integration/"
+  #   branch: "{{ inputs.branch }}"
+  #   namespace: "{{ inputs.namespace }}"
+  #   whenMissingInSource: KEEP
+  #   dryRun: true

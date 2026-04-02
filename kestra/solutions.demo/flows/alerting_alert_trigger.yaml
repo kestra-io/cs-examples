@@ -1,0 +1,37 @@
+id: alerting_alert_trigger
+namespace: solutions.demo
+
+labels:
+  maintainer: "pparvizi@kestra.io"
+  alerting: feature
+  notifications: feature
+
+tasks:
+  - id: log_failure
+    type: io.kestra.plugin.core.log.Log
+    message: |
+      failed task: {{trigger.flowId ?? 'N/A'}} [{{trigger.state ?? 'N/A'}}]
+      execution: {{trigger.executionId ?? 'N/A'}}
+      outputs: {{trigger.outputs ?? 'N/A'}}
+      custom-label: {{ kv('alerting_and_notifications_task-custom-label') ?? 'N/A' }}
+
+  - id: send
+    type: io.kestra.plugin.slack.notifications.SlackIncomingWebhook
+    url: "{{ secret(key='SLACK_WEBHOOK',namespace='system') }}"
+    messageText: "{{trigger.flowId ?? 'N/A'}} [{{trigger.state ?? 'N/A'}}] [{{trigger.executionId ?? ''}}]"
+
+triggers:
+  - id: listen
+    type: io.kestra.plugin.core.trigger.Flow
+    conditions:
+      - type: io.kestra.plugin.core.condition.ExecutionStatus
+        in:
+          - FAILED
+          - WARNING
+      - type: io.kestra.plugin.core.condition.ExecutionNamespace
+        namespace: solutions.demo
+        prefix: true
+      - type: io.kestra.plugin.core.condition.ExecutionFlow
+        flowId: alerting_error_handling
+        namespace: solutions.demo
+        

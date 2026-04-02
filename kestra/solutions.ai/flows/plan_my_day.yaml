@@ -1,0 +1,149 @@
+id: plan_my_day
+namespace: solutions.ai
+description: |
+  Webhook → Parallel APIs → Python normalize → flaky + retries → AI Agent summary → alerts on failure
+labels:
+  - key: "maintainer"
+    value: "pgrainger@kestra.io"
+inputs:
+  - id: city
+    type: STRING
+    displayName: City name
+    defaults: Austin
+
+triggers:
+  - id: incoming_webhook
+    type: io.kestra.plugin.core.trigger.Webhook
+    key: "{{secret('YOUR_WEBHOOK_TOKEN')}}"
+
+tasks:
+  # log inputs
+  - id: log_input
+    type: io.kestra.plugin.core.log.Log
+    message: "Incoming city: {{ inputs.city }}"
+
+  # Geocode city to lat/lon
+  - id: geocode_city
+    type: io.kestra.plugin.core.http.Request
+    uri: "https://geocoding-api.open-meteo.com/v1/search?name={{ inputs.city }}&count=1&language=en&format=json"
+    method: GET
+
+  # Parse Geocoded results using python
+  - id: parse_geo
+    type: io.kestra.plugin.scripts.python.Script
+    dependencies:
+      - kestra
+    script: |
+      import json, sys
+      from kestra import Kestra
+
+      data = json.loads("""{{ outputs.geocode_city.body }}""")
+      if not data.get("results"):
+          raise RuntimeError("Invalid response from Open-Meteo Geocoding.")
+      lat = data["results"][0]["latitude"]
+      lon = data["results"][0]["longitude"]
+      print(json.dumps({"lat": lat, "lon": lon}))
+      Kestra.outputs({
+        "lat": lat,
+        "lon": lon,
+      })
+
+  - id: parallel_tasks
+    type: io.kestra.plugin.core.flow.Parallel
+    allowFailure: true
+    allowWarning: true
+    tasks:
+      - id: weather_api
+        type: io.kestra.plugin.core.http.Request
+        uri: "https://api.open-meteo.com/v1/forecast?latitude={{ outputs.parse_geo.vars.lat | string }}&longitude={{ outputs.parse_geo.vars.lon | string }}&current=temperature_2m,wind_speed_10m"
+        method: GET
+
+      - id: air_quality_api
+        type: io.kestra.plugin.core.http.Request
+        uri: "https://air-quality-api.open-meteo.com/v1/air-quality?latitude={{ outputs.parse_geo.vars.lat | string }}&longitude={{ outputs.parse_geo.vars.lon | string }}&current=pm2_5,pm10,us_aqi,ozone"
+        method: GET
+
+  - id: sometimes_fails
+    type: io.kestra.plugin.scripts.python.Script
+    script: |
+      import random
+      p = random.random()
+      print(f"[flaky] random={p:.2f}")
+      if p < 0.50:
+          raise RuntimeError("Simulated transient error")
+      print("ok")
+    retry:
+      type: constant
+      interval: PT2S
+      maxAttempts: 6
+
+  # AI Agent generates a “day brief”
+  - id: day_brief
+    type: io.kestra.plugin.ai.agent.AIAgent
+    systemMessage: |
+      You are a concise assistant. Use the provided JSON to write a short, friendly plan.
+      Keep it to 3–5 sentences. Include any cautions from the data.
+    prompt: |
+      City: {{ inputs.city }}
+      weather: {{ outputs.weather_api.body ?? "not available!" }}
+      air quality: {{ outputs.air_quality_api.body ?? "not available!" }}
+      Write a brief suggestion for what someone should do today.
+  
+  # Log outputs:
+  - id: log_output
+    type: io.kestra.plugin.core.log.Log
+    message: "🤖: {{ outputs.day_brief.textOutput }}"
+
+errors:
+  # Error Handling - Put a message on Slack if anything fails!
+  - id: slack_fail
+    type: io.kestra.plugin.slack.notifications.SlackIncomingWebhook
+    url: "{{ secret(key='SLACK_WEBHOOK',namespace='system') }}"
+    payload: |
+      {
+        "text": ":rotating_light: Flow {{ flow.id }} failed on {{ inputs.city }} - Error: {{ error.message }}"
+      }
+
+sla:
+  # Task SLA: Fail the task if exceeding allowed execution time!
+  - id: must_finish_fast
+    type: MAX_DURATION
+    duration: PT10M
+    behavior: CANCEL
+    labels:
+      sla: miss
+      reason: "Exceeded allowed execution time"
+
+outputs:
+  - id: brief
+    type: STRING
+    value: "{{ outputs.day_brief.textOutput }}"
+
+
+pluginDefaults:
+  # LLM agent defaults
+  - type: io.kestra.plugin.ai.agent.AIAgent
+    values:
+      provider:
+        type: io.kestra.plugin.ai.provider.GoogleGemini
+        modelName: gemini-2.5-flash
+        apiKey: "{{ secret(key='GEMINI_KEY', namespace='system') }}"
+      allowFailure: true
+      configuration:
+        chatConfiguration:
+          logRequests: true
+      retry: 
+        type: constant
+        interval: PT2s
+        maxAttempts: 1
+
+  # HTTP Request defaults
+  - type: io.kestra.plugin.core.http.Request
+    values:
+      headers:
+        Accept: "application/json"
+      allowFailure: true
+      retry: 
+        type: constant
+        interval: PT3s
+        maxAttempts: 1

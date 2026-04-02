@@ -1,0 +1,354 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Kestra Customer Health Score Report</title>
+    <!-- Load Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Load Chart.js for visualizations -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@3.7.1/dist/chart.min.js"></script>
+    <!-- Load Inter font -->
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f7f9fb;
+        }
+
+        .card {
+            transition: all 0.3s ease;
+        }
+
+        .card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 15px rgba(0, 0, 0, 0.05);
+        }
+    </style>
+</head>
+
+<body class="p-4 sm:p-8">
+
+    <div id="app" class="max-w-7xl mx-auto">
+        <div class="mb-8 text-center">
+            <h1 class="text-3xl sm:text-4xl font-extrabold text-gray-900 tracking-tight">
+                Account Health Dashboard
+            </h1>
+            <p class="mt-2 text-lg text-gray-500">Kestra Health Score for Account <span id="account-id"
+                    class="font-semibold text-indigo-600"></span></p>
+        </div>
+
+        <!-- Main Dashboard Grid -->
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+
+            <!-- Column 1: Overall Score & Status -->
+            <div class="lg:col-span-1">
+                <div id="status-card"
+                    class="card bg-white p-6 rounded-xl shadow-lg h-full flex flex-col justify-between">
+                    <div>
+                        <h2 class="text-xl font-bold mb-4 text-gray-800">Overall Health Score</h2>
+                        <!-- Radial Gauge Placeholder -->
+                        <div class="flex justify-center mb-6">
+                            <canvas id="radialGaugeChart" width="200" height="200"></canvas>
+                        </div>
+                        <div class="text-center">
+                            <p class="text-lg font-semibold text-gray-600">Current Status</p>
+                            <span id="health-status"
+                                class="inline-block px-4 py-1 text-sm font-semibold rounded-full shadow-md mt-2"></span>
+                        </div>
+                    </div>
+                    <div class="mt-6 border-t pt-4">
+                        <h3 class="font-semibold text-gray-700 mb-2">Key Action Based on Status:</h3>
+                        <p id="recommendation-text" class="text-sm text-gray-600 italic"></p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Column 2: Score Breakdown (Stacked Bar Chart) -->
+            <div class="lg:col-span-2">
+                <div class="card bg-white p-6 rounded-xl shadow-lg h-full">
+                    <h2 class="text-xl font-bold mb-4 text-gray-800">Weighted Score Contribution (Max 100)</h2>
+                    <canvas id="scoreBreakdownChart" height="150"></canvas>
+                </div>
+            </div>
+        </div>
+
+        <!-- Component Metrics Table -->
+        <div class="mt-8">
+            <div class="card bg-white p-6 rounded-xl shadow-lg">
+                <h2 class="text-xl font-bold mb-4 text-gray-800">Detailed Performance Metrics</h2>
+                <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4" id="metrics-summary">
+                    <!-- Metrics will be inserted here -->
+                </div>
+
+                <h3 class="text-lg font-semibold mt-6 mb-3 text-gray-800">Raw Data Insights</h3>
+                <div class="overflow-x-auto">
+                    <table class="min-w-full divide-y divide-gray-200">
+                        <thead class="bg-gray-50">
+                            <tr>
+                                <th
+                                    class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                    Metric</th>
+                                <th
+                                    class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                    Value</th>
+                                <th
+                                    class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                    Status/Note</th>
+                            </tr>
+                        </thead>
+                        <tbody class="bg-white divide-y divide-gray-200 text-sm" id="raw-data-body">
+                            <!-- Raw data rows inserted here -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+    </div>
+
+    <script>
+        // --- INJECTED JSON DATA ---
+        const CHS_DATA = {{ outputs.generate_chs_data.vars.chs_json_string }};
+
+        const WEIGHT_MAP = {
+            'SUCCESS_RATE': 35,
+            'ACTIVE_FLOWS': 15,
+            'PYLON_RISK': 20, // Absolute value for visualization
+            'SENTIMENT': 10,
+            'LICENSE_EXPIRY': 10,
+            'CADENCE': 10
+        };
+
+        // Total potential points: 35 + 15 + 20 + 10 + 10 + 10 = 100 (using abs risk)
+        const MAX_POSSIBLE_SCORE = 100;
+
+        function getStatusStyle(status) {
+            switch (status) {
+                case 'Green':
+                    return { color: 'text-green-800', bg: 'bg-green-100', action: 'Monitor for expansion opportunities and request testimonials.' };
+                case 'Yellow':
+                    return { color: 'text-yellow-800', bg: 'bg-yellow-100', action: 'Proactive intervention required: Schedule deep-dive to address license and usage risks.' };
+                case 'Red':
+                    return { color: 'text-red-800', bg: 'bg-red-100', action: 'Critical risk! Immediate executive engagement and launch of a formal Red Account Plan.' };
+                default:
+                    return { color: 'text-gray-800', bg: 'bg-gray-100', action: 'Status undefined.' };
+            }
+        }
+
+        function renderRadialGaugeChart(score, status) {
+            const ctx = document.getElementById('radialGaugeChart').getContext('2d');
+            const statusStyle = getStatusStyle(status);
+            const color = statusStyle.color.replace('text-', '').replace('-800', '');
+
+            new Chart(ctx, {
+                type: 'doughnut',
+                data: {
+                    labels: ['Score', 'Remaining'],
+                    datasets: [{
+                        data: [score, MAX_POSSIBLE_SCORE - score],
+                        backgroundColor: [
+                            { Green: '#10B981', Yellow: '#FBBF24', Red: '#EF4444' }[color] || '#E5E7EB',
+                            '#E5E7EB' // Gray background for remaining score
+                        ],
+                        borderWidth: 0,
+                    }]
+                },
+                options: {
+                    rotation: -90,
+                    circumference: 180, // Half circle
+                    cutout: '70%',
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: { display: false },
+                        tooltip: { enabled: false },
+                        title: {
+                            display: true,
+                            text: `${score} / 100`,
+                            position: 'center',
+                            font: { size: 30, weight: 'bold' },
+                            color: statusStyle.color.replace('text-', '').replace('-800', '-600')
+                        }
+                    }
+                },
+                plugins: [{
+                    id: 'textCenter',
+                    beforeDraw: function (chart) {
+                        const ctx = chart.ctx;
+                        const width = chart.width,
+                            height = chart.height,
+                            fontSize = (height / 140).toFixed(2),
+                            text = `${score}`,
+                            // FIX 1: Change MAX_SCORE to MAX_POSSIBLE_SCORE
+                            text2 = `/ ${MAX_POSSIBLE_SCORE}`;
+
+                        ctx.restore();
+                        // FIX 2: Corrected template literal string concatenation
+                        ctx.font = `${fontSize * 1.5}em Inter`;
+                        ctx.textBaseline = "middle";
+
+                        const textX = Math.round((width - ctx.measureText(text).width) / 2);
+                        const textY = height / 1.5;
+
+                        ctx.fillText(text, textX, textY);
+
+                        // FIX 3: Corrected template literal string concatenation
+                        ctx.font = `${fontSize * 0.7}em Inter`;
+                        const text2X = Math.round((width - ctx.measureText(text2).width) / 2);
+                        ctx.fillText(text2, text2X, textY + 25);
+
+                        ctx.save();
+                    }
+                }]
+            });
+        }
+
+        function renderScoreBreakdownChart(metrics) {
+            // Prepare data: Only include positive scores for the bar chart visualization
+            const labels = [
+                'Flow Adoption (WoW)', 'Flow Success Rate', 'Relationship Cadence',
+                'Sentiment', 'License Risk', 'Pylon Risk'
+            ];
+
+            // Map component scores to an array for the chart
+            const componentScores = [
+                metrics.active_flows_score,
+                metrics.success_score,
+                metrics.cadence_score,
+                metrics.sentiment_score,
+                metrics.license_score,
+                Math.abs(metrics.pylon_risk_score) // Use absolute value to show potential impact
+            ];
+
+            // Define color gradient
+            const backgroundColors = [
+                '#4F46E5', // Indigo (Adoption)
+                '#06B6D4', // Cyan (Success)
+                '#F59E0B', // Amber (Cadence)
+                '#10B981', // Green (Sentiment)
+                '#F97316', // Orange (License Risk)
+                '#EF4444'  // Red (Pylon Risk)
+            ];
+
+            const ctx = document.getElementById('scoreBreakdownChart').getContext('2d');
+            new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        label: 'Contribution to CHS',
+                        data: componentScores,
+                        backgroundColor: backgroundColors,
+                        borderRadius: 8,
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    indexAxis: 'y', // Horizontal bars
+                    scales: {
+                        x: {
+                            stacked: false,
+                            max: MAX_POSSIBLE_SCORE * 0.35, // Max value of any single component (Success Rate)
+                            title: { display: true, text: 'Points Earned' }
+                        },
+                        y: {
+                            stacked: false,
+                            grid: { display: false }
+                        }
+                    },
+                    plugins: {
+                        legend: { display: false },
+                        title: { display: false }
+                    }
+                }
+            });
+        }
+
+        function renderMetricsSummary(metrics) {
+            const summaryElement = document.getElementById('metrics-summary');
+
+            const metricList = [
+                { label: 'WoW Flow Growth', value: `${metrics.wow_growth_percent.toFixed(1)}%`, trend: metrics.wow_growth_percent > 0 ? 'up' : (metrics.wow_growth_percent < 0 ? 'down' : 'flat') },
+                { label: 'P1/P2 Open Tickets', value: metrics.pylon_p1_p2_count, risk: metrics.pylon_p1_p2_count > 0 ? 'high' : 'low' },
+                { label: 'Days to License Expiry', value: `${metrics.days_to_expiry} days`, risk: metrics.days_to_expiry < 90 ? 'high' : (metrics.days_to_expiry < 180 ? 'medium' : 'low') },
+                { label: 'Last Cadence (Days)', value: `${metrics.days_since_last_cadence} days ago`, risk: metrics.days_since_last_cadence > 90 ? 'medium' : 'low' },
+            ];
+
+            summaryElement.innerHTML = metricList.map(m => {
+                let color;
+                let icon;
+
+                if (m.trend === 'up' || m.risk === 'low') {
+                    color = 'text-green-600 bg-green-50';
+                    icon = m.trend === 'up' ? '↑' : '✓';
+                } else if (m.trend === 'down' || m.risk === 'high') {
+                    color = 'text-red-600 bg-red-50';
+                    icon = m.trend === 'down' ? '↓' : '🛑';
+                } else {
+                    color = 'text-yellow-600 bg-yellow-50';
+                    icon = '●';
+                }
+
+                return `
+                <div class="p-4 rounded-lg ${color} flex items-center shadow-inner">
+                    <span class="text-xl mr-3">${icon}</span>
+                    <div>
+                        <p class="text-xs font-medium text-gray-500">${m.label}</p>
+                        <p class="text-lg font-bold">${m.value}</p>
+                    </div>
+                </div>
+            `;
+            }).join('');
+        }
+
+        function renderRawData(metrics) {
+            const rawDataBody = document.getElementById('raw-data-body');
+
+            const rawMetricList = [
+                // FIX: Added License Expiry and Cadence Days
+                { metric: 'Days to License Expiry', value: `${metrics.days_to_expiry} days`, note: metrics.days_to_expiry < 0 ? 'License is expired!' : 'Direct driver of License Risk score.' },
+                { metric: 'Days Since Last Cadence', value: `${metrics.days_since_last_cadence} days`, note: 'Direct driver of Relationship Cadence score.' },
+
+                { metric: 'Kestra Flow Runs (Current Week)', value: metrics.current_period_runs, note: 'Daily runs summed for the most recent period.' },
+                { metric: 'Kestra Flow Runs (Previous Week)', value: metrics.previous_period_runs, note: 'Baseline for WoW growth calculation.' },
+                // FIX: Corrected variable reference from WEIGHTS_MAP to WEIGHT_MAP
+                { metric: 'Flow Success Rate (Mocked)', value: `${(CHS_DATA.metrics.success_score / WEIGHT_MAP.SUCCESS_RATE * 100).toFixed(1)}%`, note: 'Requires real data source.' },
+                { metric: 'Pylon Sentiment', value: metrics.overall_sentiment, note: 'Derived from open ticket analysis.' },
+            ];
+
+            // --- FIX: Using array map and innerHTML directly ---
+            // This is the simplest and most robust way to insert the HTML rows without conflicting with
+            // the external Python f-string or internal JavaScript map issues.
+            let htmlRows = rawMetricList.map(m => `
+            <tr>
+                <td class="px-6 py-4 whitespace-nowrap font-semibold">${m.metric}</td>
+                <td class="px-6 py-4 whitespace-nowrap">${m.value}</td>
+                <td class="px-6 py-4 whitespace-nowrap text-gray-500">${m.note}</td>
+            </tr>
+        `).join('');
+
+            rawDataBody.innerHTML = htmlRows;
+        }
+
+        document.addEventListener('DOMContentLoaded', () => {
+            const { final_score, status, metrics, account_id } = CHS_DATA;
+            const statusStyle = getStatusStyle(status);
+
+            // Update basic text elements
+            document.getElementById('account-id').textContent = account_id;
+            document.getElementById('health-status').textContent = status;
+            document.getElementById('health-status').classList.add(statusStyle.bg, statusStyle.color);
+            document.getElementById('recommendation-text').textContent = statusStyle.action;
+
+            // Render charts and tables
+            renderRadialGaugeChart(final_score, status);
+            renderScoreBreakdownChart(metrics);
+            renderMetricsSummary(metrics);
+            renderRawData(metrics);
+        });
+    </script>
+
+</body>
+
+</html>

@@ -1,0 +1,91 @@
+id: productRecommender
+namespace: solutions.ai
+labels:
+  - key: "feature"
+    value: "aiAgent"
+  - key: "maintainer"
+    value: "fqazi@kestra.io"
+  - key: "kestra.version"
+    value: "1.0.x"
+  - key: "domain"
+    value: "training"
+inputs:
+  - id: category
+    type: SELECT
+    expression: "{{ http(uri = 'https://dummyjson.com/products/categories') | jq('.[].slug') }}"
+    defaults: fragrances
+    displayName: Product Category
+
+  - id: product
+    type: SELECT
+    displayName: Product Name
+    defaults: "Calvin Klein CK One"
+    allowCustomValue: true
+    dependsOn:
+      inputs:
+        - category
+    expression: "{{ http(uri = 'https://dummyjson.com/products/category/' + inputs.category) | jq('.products[].title') }}"
+
+tasks:
+  - id: getAllProducts
+    type: io.kestra.plugin.core.http.Request
+    options:
+      allowFailed: true
+    uri: "{{ 'https://dummyjson.com/products/category/' ~ inputs.category }}"
+
+  - id: recommendProduct
+    type: io.kestra.plugin.ai.agent.AIAgent
+    taskCache:
+      enabled: true
+
+    prompt: |
+      You are an intelligent shopping assistant. Based on the following product data, recommend which product is the best to buy.
+      Consider the following factors:
+      Rating: Higher ratings are preferred.
+      Reviews: Look at the tone and satisfaction in the comments. Favor products with more positive reviews.
+      Discount Percentage: A higher discount is more attractive, but don't recommend low-rated products just because they are cheap.
+      Return Policy: Favor products with longer or more flexible return policies.
+      Output a recommendation including:
+      The title of the product you suggest buying
+      A brief explanation justifying the choice based on the above factors
+      Mention any potential downside, if applicable
+      Here's the product data (in JSON format):
+      {{ outputs.getAllProducts.body }}
+    provider:
+      type: io.kestra.plugin.ai.provider.GoogleGemini
+      apiKey: "{{ secret(namespace='system', key='GEMINI_KEY') }}"
+      modelName: "gemini-2.5-flash-preview-05-20"
+    configuration:
+      responseFormat:
+        type: JSON
+        jsonSchema:
+          type: object
+          required: ["title", "justification", "potentialDownside", "id"]
+          properties:
+            title:
+              type: string
+            justification:
+              type: string
+            potentialDownside:
+              type: string
+            id:
+              type: string
+
+  - id: storeRecommendationInKV
+    type: io.kestra.plugin.core.kv.Set
+    key: "{{ execution.id }}"
+    value: "{{ outputs.recommendProduct.jsonOutput }}"
+    kvType: JSON
+
+  - id: getRecommendedProductDetails
+    type: io.kestra.plugin.core.http.Request
+    options:
+      allowFailed: true
+    uri: "{{ 'https://dummyjson.com/products/' ~ outputs.recommendProduct.jsonOutput.id }}"
+
+  - id: notify_slack
+    type: io.kestra.plugin.core.log.Log
+    message: |
+      {
+        "text": "*Product Recommendation*\n\n*Title:* {{ outputs.recommendProduct.jsonOutput.title }}\n*Reason:* {{ outputs.recommendProduct.jsonOutput.justification }}\n*Downside:* {{ outputs.recommendProduct.jsonOutput.potentialDownside | default('None') }}"
+      }

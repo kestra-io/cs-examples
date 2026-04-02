@@ -1,0 +1,91 @@
+id: deprovisionVMUsingTerraform
+namespace: solutions.infra
+
+tasks:
+  - id: deleteVM
+    disabled: true
+    type: io.kestra.plugin.terraform.cli.TerraformCLI
+    env:
+      GOOGLE_APPLICATION_CREDENTIALS: "gcp-svc-account.json"
+    inputFiles:
+      main.tf: "{{ render(read('createVM/main.tf')) }}"
+      backend.tf: "{{ render(read('createVM/backend.tf')) }}"
+      gcp-svc-account.json: "{{ secret('GCP_SVC_ACCOUNT') }}"
+      vm-post-create.sh: "{{ read('createVM/vm-post-create.sh') }}"
+    beforeCommands:
+      - terraform init -backend-config="prefix={{ inputs.vmName }}"
+    commands:
+      - terraform plan
+      - terraform destroy -auto-approve -json
+    allowFailure: false
+    assets:
+      inputs:
+        - id: "{{ inputs.vmName }}"
+      outputs:
+        - id: "{{ inputs.vmName }}"
+          type: io.kestra.plugin.ee.assets.VM
+          metadata:
+            vmName: "{{ inputs.vmName }}"
+            vmSize: "{{ inputs.vmSize }}"
+            zone: "{{ inputs.zone }}"
+            billingAccount: "{{ inputs.billingAccount }}"
+            osFlavor: "{{ inputs.osFlavor }}"
+            network: "{{ inputs.network }}"
+            subnet: "{{ inputs.subnet }}"
+            ipAddress: "{{ inputs.ipAddress }}"
+            state: "deleted"
+
+  - id: removeDNSentry
+    type: io.kestra.plugin.ansible.cli.AnsibleCLI
+    disabled: false
+    # Ensure pywinrm is installed in the runner environment so Ansible can talk to Windows
+    beforeCommands:
+      - pip install pywinrm
+    inputFiles:
+      inventory.ini: "{{ render(read('createVM/inventory.ini')) }}"
+      removeDNSEntry-playbook.yml: "{{ render(read('createVM/removeDNSEntry-playbook.yml')) }}"
+    commands:
+      - ansible-playbook -i inventory.ini removeDNSEntry-playbook.yml
+
+inputs:
+  - id: vmName
+    type: STRING
+    defaults: gcpdevlnxap08
+
+  - id: ipAddress
+    type: STRING
+    defaults: 10.128.10.8
+
+  - id: vmSize
+    type: STRING
+    defaults: n1-standard-1
+
+  - id: zone
+    type: STRING
+    defaults: us-central1-a
+
+  - id: billingAccount
+    type: STRING
+    defaults: kestra-sandbox
+
+  - id: osFlavor
+    type: STRING
+    defaults: ubuntu-os-cloud/ubuntu-2204-lts
+
+  - id: network
+    type: STRING
+    defaults: pg-gcp-demo-vpc
+
+  - id: subnet
+    type: STRING
+    defaults: pg-gcp-demo-vpc
+
+labels:
+  - key: "domain"
+    value: "infra"
+  - key: "maintainer"
+    value: "fqazi@kestra.io"
+  - key: "kestra.version"
+    value: "1.2.3"
+  - key: "feature"
+    value: "terraform"

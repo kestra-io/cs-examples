@@ -1,0 +1,61 @@
+id: updateInventory
+namespace: solutions.infra
+
+labels:
+  - key: "maintainer"
+    value: "fqazi@kestra.io"
+  - key: "kestra.version"
+    value: "1.0.x"
+  - key: "domain"
+    value: "infra"
+
+inputs:
+  - id: hostname
+    displayName: Host Name
+    type: STRING
+
+  - id: vmProps
+    displayName: Input Properties
+    type: JSON
+
+  - id: cloudProvider
+    displayName: Cloud Provider
+    type: SELECT
+    values:
+      - AWS
+      - GCP
+      - Azure
+      - VCF
+    defaults: GCP
+
+tasks:
+  - id: updateInventory
+    type: io.kestra.plugin.core.flow.Sequential
+    tasks:
+      - id: getVMInventory
+        type: io.kestra.plugin.core.kv.Get
+        key: vmInventory
+
+      - id: prepareInventory
+        type: io.kestra.plugin.scripts.python.Script
+        beforeCommands:
+          - pip install requests kestra
+        script: |
+          from kestra import Kestra
+          # get VM inventory
+          vmInventory = {{ outputs.getVMInventory.value ?? {"gcp":{},"aws":{},"azure":{},"vcf":{}} }}
+          # set hostname
+          hostname = "{{ inputs.hostname }}"
+          # get vms for selected cloud
+          cloudVMs = vmInventory["{{ inputs.cloudProvider | lower }}"]
+          # add new vm entry in the inventory
+          cloudVMs[hostname] = {{ inputs.vmProps | toJson }}
+          vmInventory["{{ inputs.cloudProvider | lower }}"] = cloudVMs
+          # set output
+          Kestra.outputs({'vmInventory': vmInventory})
+
+      - id: updateVMInventory
+        type: io.kestra.plugin.core.kv.Set
+        key: vmInventory
+        value: "{{ outputs.prepareInventory.vars.vmInventory }}"
+        kvType: JSON

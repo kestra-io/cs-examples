@@ -1,0 +1,75 @@
+id: solutions_ops_orderItem
+type: io.kestra.plugin.ee.apps.Execution
+namespace: solutions.ops
+displayName: App for Ordering a Product
+flowId: orderItem
+
+access:
+  type: PRIVATE
+  catalog: true
+
+layout:
+  - on: OPEN
+    blocks:
+      - type: io.kestra.plugin.ee.apps.core.blocks.Markdown
+        content: |
+          ## Place your Order
+      - type: io.kestra.plugin.ee.apps.execution.blocks.CreateExecutionForm
+      - type: io.kestra.plugin.ee.apps.execution.blocks.CreateExecutionButton
+        text: Submit Order
+  - on: RUNNING
+    blocks:
+      - type: io.kestra.plugin.ee.apps.core.blocks.Markdown
+        content: |
+          ## Your order is under process.
+          Waiting for the following approvals:
+            - Line Manager: {{ printContext().execution.task.id ?? false  == 'sendPurchaseOrderForFinanceApproval' ? 'Approved ✅' : 'Pending ⚠️'}}
+            - Finance Officer: {{ printContext().execution.isRunning ?? false ? 'Pending ⚠️' : 'Pending ⚠️'}}
+      - type: io.kestra.plugin.ee.apps.core.blocks.Loading
+      - type: io.kestra.plugin.ee.apps.execution.blocks.CancelExecutionButton
+        text: Cancel request
+  - on: PAUSE
+    blocks:
+      - type: io.kestra.plugin.ee.apps.core.blocks.Markdown
+        content: |
+          An order has been placed by {{ printContext().params.requestor ?? 'TestUser' | base64decode }} for
+          Product: {{ fromJson(printContext().params.flowInputs | base64decode).product }}.
+
+          Kindly approve or reject with proper remarks for the associated Cost Center.
+      - type: io.kestra.plugin.ee.apps.execution.blocks.ResumeExecutionForm
+      - type: io.kestra.plugin.ee.apps.execution.blocks.ResumeExecutionButton
+        text: Submit
+    condition: "{{ (printContext().params.flowInputs ?? false) != false }}"
+  - on: PAUSE
+    blocks:
+      - type: io.kestra.plugin.ee.apps.core.blocks.Alert
+        content: Your order has been verified and approval request has been sent. Follow up with your line manager.
+        style: INFO
+        showIcon: true
+    condition: "{{ printContext().params.flowInputs ?? true }}"
+  - on: SUCCESS
+    blocks:
+      - type: io.kestra.plugin.ee.apps.core.blocks.Markdown
+        content: |
+          ## Order Status
+      - type: io.kestra.plugin.ee.apps.core.blocks.Alert
+        style: INFO
+        showIcon: true
+        content: Completed!
+      - type: io.kestra.plugin.ee.apps.execution.blocks.Outputs
+        filter:
+          include:
+            - orderStatus
+            - invoiceStatus
+            - purchaseOrderStatus
+  - on: FAILURE
+    blocks:
+      - type: io.kestra.plugin.ee.apps.core.blocks.Alert
+        content: Failed to Process Order
+        style: ERROR
+        showIcon: true
+      - type: io.kestra.plugin.ee.apps.execution.blocks.TaskOutputs
+        outputs:
+          - type: STRING
+            value: "{{printContext().outputs.cancelOrder.value}}"
+            displayName: "Order Status:"

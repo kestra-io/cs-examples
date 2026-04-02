@@ -1,0 +1,76 @@
+id: azure_devops
+namespace: solutions.ops
+
+variables:
+  resourceGroup: "poc"
+  region: "uksouth"
+  storageAccount: "pgpockestra"
+labels:
+  - key: "maintainer"
+    value: "pgrainger@kestra.io"
+inputs:
+  - id: name
+    type: STRING
+    defaults: "my-unique-poc-appname123"
+
+tasks:
+  - id: wdir
+    type: io.kestra.plugin.core.flow.WorkingDirectory
+    tasks:
+      - id: clone
+        type: io.kestra.plugin.git.Clone
+        directory: azure-function-demo
+        url: https://github.com/paulgrainger85/azure-function-demo.git
+        branch: main
+      - id: zip
+        type: io.kestra.plugin.scripts.shell.Commands
+        beforeCommands:
+          - apt update && apt install -y zip
+        # outputFiles:
+        #   - azure-function-demo/*.zip
+        commands:
+          - cd azure-function-demo
+          - zip -r release.zip ./*
+          - mv release.zip {{workingDir}}/
+      - id: cli
+        type: io.kestra.plugin.azure.cli.AzCLI
+        commands:
+          - |
+            az functionapp create \
+              --resource-group {{vars.resourceGroup}} \
+              --consumption-plan-location {{vars.region}} \
+              --runtime python \
+              --runtime-version 3.9 \
+              --functions-version 4 \
+              --name {{inputs.name}} \
+              --storage-account {{vars.storageAccount}} \
+              --os-type Linux
+      - id: deploy_func
+        type: io.kestra.plugin.azure.cli.AzCLI
+        commands:
+          - |
+            az functionapp deployment source config-zip \
+              -g {{vars.resourceGroup}} \
+              -n {{inputs.name}} \
+              --src {{workingDir}}/release.zip
+  - id: trigger_logic_api
+    type: io.kestra.plugin.core.http.Request
+    method: POST
+    uri: https://prod-54.uksouth.logic.azure.com:443/workflows/{{secret('LOGIC_APP_KEY')}}/triggers/When_a_HTTP_request_is_received/paths/invoke?api-version=2016-10-01&sp=%2Ftriggers%2FWhen_a_HTTP_request_is_received%2Frun&sv=1.0&sig={{secret('LOGIC_APP_SIG')}}
+  - id: get_data
+    type: io.kestra.plugin.core.http.Download
+    uri: "{{ outputs.trigger_logic_api['body'] | jq('.message') | first }}"
+ 
+
+
+
+pluginDefaults:
+  - forced: false
+    type: io.kestra.plugin.azure
+    values:
+        servicePrincipal: true
+        username: "{{secret('AZURE_SP_APP_ID')}}"
+        password: "{{ secret('AZURE_SP_PASSWORD') }}"
+        tenant: "{{ secret('AZURE_TENANT_ID') }}"
+
+

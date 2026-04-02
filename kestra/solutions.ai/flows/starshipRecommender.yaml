@@ -1,0 +1,95 @@
+id: starshipRecommender
+namespace: solutions.ai
+labels:
+  - key: "maintainer"
+    value: "fqazi@kestra.io"
+  - key: "kestra.version"
+    value: "1.0.x"
+  - key: "domain"
+    value: "training"
+inputs:
+  - id: priority
+    type: SELECT
+    displayName: Priority Factor
+    description: What is the most important feature for the starship?
+    required: true
+    values:
+      - Cargo Capacity
+      - Speed (Hyperdrive/MGLT)
+      - Cost Efficiency
+    defaults: Speed (Hyperdrive/MGLT)
+
+tasks:
+  - id: getStarships
+    type: io.kestra.plugin.core.http.Request
+    uri: "https://swapi.dev/api/starships"
+    method: GET
+    contentType: application/json
+
+  - id: recommendBestStarship
+    type: io.kestra.plugin.ai.agent.AIAgent
+    taskCache:
+      enabled: true
+    prompt: |
+      You are a strategic fleet advisor for the Rebel Alliance.
+
+      The user has indicated that their **priority is: {{ inputs.priority }}**.
+
+      Based on the following starship data, recommend the **best starship** for a long-range mission.
+
+      Prioritize according to this factor:
+      {% if inputs.priority == 'Cargo Capacity' %}
+      - **High cargo capacity** is most important.
+      {% elseif inputs.priority == 'Speed (Hyperdrive/MGLT)' %}
+      - **Lower hyperdrive rating** and **higher MGLT** are most important.
+      {% elseif inputs.priority == 'Cost Efficiency' %}
+      - **Lower cost_in_credits** is most important.
+      {% endif %}
+
+      Still consider:
+      - Reasonable tradeoffs with other capabilities.
+      - Avoid impractical or overly expensive ships unless justified.
+
+      Output a JSON object:
+      - `name`: Starship name
+      - `justification`: Why it was chosen
+      - `potentialDownside`: Any drawback
+      - `url`: SWAPI URL
+
+      Starship JSON data:
+      {{ outputs.getStarships.body }}
+
+    provider:
+      type: io.kestra.plugin.ai.provider.GoogleGemini
+      apiKey: "{{ secret(namespace='system', key='GEMINI_KEY') }}"
+      modelName: "gemini-2.5-flash-preview-05-20"
+    configuration:
+      responseFormat:
+        type: JSON
+        jsonSchema:
+          type: object
+          required: ["name", "justification", "potentialDownside", "url"]
+          properties:
+            name:
+              type: string
+            justification:
+              type: string
+            potentialDownside:
+              type: string
+            url:
+              type: string
+
+  - id: saveRecommendation
+    type: io.kestra.plugin.core.kv.Set
+    key: "{{ execution.id }}"
+    value: "{{ outputs.recommendBestStarship.jsonOutput }}"
+    kvType: JSON
+
+  - id: logRecommendation
+    type: io.kestra.plugin.core.log.Log
+    message: |
+      🌌 Starship Recommendation:
+      *Name:* {{ outputs.recommendBestStarship.jsonOutput.name }}
+      *Reason:* {{ outputs.recommendBestStarship.jsonOutput.justification }}
+      *Downside:* {{ outputs.recommendBestStarship.jsonOutput.potentialDownside }}
+      *URL:* {{ outputs.recommendBestStarship.jsonOutput.url }}

@@ -1,0 +1,110 @@
+id: disk_cleanup_maintenance
+namespace: kestra.demo
+
+description: |
+  Remotely cleans up temp files and docker images via SSH.
+  Includes pre/post metrics and an approval gate for production hosts.
+
+  This Flow uses Kestra Assets to keep track of targeted hosts for disk clean up. For more info visit:
+  https://kestra.io/docs/enterprise/governance/assets
+
+labels:
+  - key: "maintainer"
+    value: "pparvizi@kestra.io"
+  - key: "feature"
+    value: "infra"
+  - key: "feature"
+    value: "maintenance"
+
+inputs:
+  - id: target_host
+    type: STRING
+    description: "Hostname or IP of the target Linux server"
+
+  - id: remote_user
+    type: STRING
+    defaults: "kestra-admin"
+    
+  - id: force_cleanup
+    type: BOOLEAN
+    defaults: false
+    description: "If true, bypasses the approval step"
+
+variables:
+  # Guardrail: Only these hosts are manageable by this flow
+  allowed_hosts: ["srv-app-01", "srv-app-02", "srv-db-stg"]
+
+tasks:
+  # --- STEP 1: GUARDRAILS ---
+  - id: validate_host
+    type: io.kestra.plugin.core.execution.Fail
+    runIf: "{{ not (vars.allowed_hosts | contains(inputs.target_host) or inputs.target_host | startsWith('svp-')) }}"
+    errorMessage: "The target host '{{ inputs.target_host }}' is not allowed. Must be one of {{ vars.allowed_hosts | json }} or start with 'svp-'."
+
+  # --- STEP 2: PRE-CHECK ---
+  - id: log_host
+    type: io.kestra.plugin.core.log.Log
+    message: "Cleaning up {{ inputs.target_host }}..."
+
+  - id: pre_cleanup_metrics
+    type: io.kestra.plugin.fs.ssh.Command
+    commands:
+      - df -h / | awk 'NR==2 {print $5}' | sed 's/%//' > disk_usage_pct.txt
+
+  # --- STEP 3: APPROVAL GATE ---
+  # Only pauses if it's a production-like host and force_cleanup is false
+  - id: wait_for_approval
+    type: io.kestra.plugin.core.flow.Pause
+    description: "Please confirm cleanup for {{ inputs.target_host }}"
+    runIf: "{{ inputs.target_host contains 'srv-app' and not inputs.force_cleanup }}"
+
+  # --- STEP 4: CLEANUP EXECUTION ---
+  - id: run_cleanup
+    type: io.kestra.plugin.fs.ssh.Command
+    commands:
+      - echo "Cleaning /tmp older than 7 days..."
+      - sudo find /tmp -type f -atime +7 -delete
+      - echo "Pruning unused Docker images..."
+      - sudo docker image prune -af --filter "until=168h"
+      - echo "Rotating logs..."
+      - sudo logrotate -f /etc/logrotate.conf
+    assets:
+      outputs:
+        - id: "{{ inputs.target_host }}"
+          type: io.kestra.plugin.ee.assets.VM
+          description: Track via Kestra Assets which hosts have been targeted for disk cleanup & when.
+          displayName: "disk_cleanup_{{ inputs.target_host }}"
+          metadata:
+            # custom tags 
+            operation: disk_cleanup
+            os: linux
+
+  # --- STEP 5: POST-CHECK ---
+  - id: post_cleanup_metrics
+    type: io.kestra.plugin.fs.ssh.Command
+    commands:
+      - df -h / | awk 'NR==2 {print $3}' > space_used_after.txt
+      - df -h / | awk 'NR==2 {print $4}' > space_free_after.txt
+
+  # --- STEP 6: AUDIT & NOTIFY ---
+  - id: notify_slack
+    type: io.kestra.plugin.slack.notifications.SlackIncomingWebhook
+    url: "{{ secret('SLACK_WEBHOOK_URL') }}"
+    messageText: >
+      **Maintenance Report:** {{ inputs.target_host }}
+      🧹 Status: Success
+
+errors:
+  - id: on_failure
+    type: io.kestra.plugin.slack.notifications.SlackIncomingWebhook
+    url: "{{ secret('SLACK_WEBHOOK_URL') }}"
+    messageText: >
+      ❌ *Cleanup Failed* on {{ inputs.target_host }}. Check SSH connectivity or sudo permissions.
+
+pluginDefaults:
+  - forced: false
+    type: io.kestra.plugin.fs.ssh
+    values:
+      host: "{{ inputs.target_host }}"
+      username: "{{ inputs.remote_user }}"
+      privateKey: "{{ secret('SSH_PRIVATE_KEY') }}"

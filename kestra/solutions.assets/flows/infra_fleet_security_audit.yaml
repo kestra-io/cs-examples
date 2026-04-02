@@ -1,0 +1,93 @@
+id: infra_fleet_security_audit
+namespace: solutions.assets
+
+labels:
+  maintainer: "pparvizi@kestra.io"
+  assets: feature
+  infra: feature
+  security: feature
+
+tasks:
+  - id: get_all_servers
+    type: io.kestra.plugin.core.debug.Return
+    format: "{{ assets(type='io.kestra.plugin.ee.assets.VM') }}"
+
+  - id: audit_servers
+    type: io.kestra.plugin.core.flow.ForEach
+    values: "{{ outputs.get_all_servers.value }}"
+    tasks:
+      - id: get_server_info
+        type: io.kestra.plugin.core.execution.SetVariables
+        variables:
+          server_id: "{{ fromJson(taskrun.value).id }}"
+          server_ip: "{{ fromJson(taskrun.value).metadata.ip_address }}"
+          python_version: "{{ fromJson(taskrun.value).metadata.python_version }}"
+          server_env: "{{ fromJson(taskrun.value).metadata.env }}"
+          server_os: "{{ fromJson(taskrun.value).metadata.os }}"
+
+      - id: check_security_agent
+        type: io.kestra.plugin.scripts.shell.Script
+        script: |
+          if [ "{{ vars.server_id }}" == "srv-stg-01" ]; then
+            echo "CrowdStrike Agent NOT FOUND"
+            exit 0
+          else
+            echo "CrowdStrike Agent v2.4 Active"
+            exit 0
+          fi
+
+      - id: update_compliance_status
+        type: io.kestra.plugin.core.debug.Return
+        format: "Updating {{ vars.server_id }} compliance state"
+        assets:
+          inputs:
+            - id: "{{ vars.server_id }}"
+          outputs:
+            - id: "{{ vars.server_id }}"
+              type: io.kestra.plugin.ee.assets.VM
+              metadata:
+                compliance_status: "{{ vars.server_id == 'srv-stg-01' ? 'non-compliant' : 'compliant' }}"
+                last_audit: "{{ now() }}"
+                ip_address: "{{vars.server_ip}}"
+                env: "{{vars.server_env}}"
+                os: "{{vars.server_os}}"
+                python_version: "{{vars.python_version}}"
+
+  - id: fleet_remediation
+    type: io.kestra.plugin.core.flow.Sequential
+    tasks:
+      - id: find_non_compliant
+        type: io.kestra.plugin.core.debug.Return
+        format: "{{ assets(metadata={'compliance_status': 'non-compliant'}) }}"
+
+      - id: install_security_agent
+        type: io.kestra.plugin.core.flow.ForEach
+        values: "{{ outputs.find_non_compliant.value }}"
+        tasks:
+          - id: ssh_install
+            type: io.kestra.plugin.scripts.shell.Commands
+            runner: PROCESS
+            commands:
+              - echo "Connecting to {{ fromJson(taskrun.value).id }} at {{ fromJson(taskrun.value).metadata.ip_address }}..."
+              - echo "Installing CrowdStrike Agent v2.4..."
+              - sleep 2
+            assets:
+              inputs:
+                - id: "{{ fromJson(taskrun.value).id }}"
+              outputs:
+                - id: "{{ fromJson(taskrun.value).id }}"
+                  type: io.kestra.plugin.ee.assets.VM
+                  metadata:
+                    # Crucial: Reset the status to compliant after the fix
+                    compliance_status: "compliant"
+                    remediated_at: "{{ now() }}"
+
+triggers:
+  - id: daily_audit
+    type: io.kestra.plugin.core.trigger.Schedule
+    cron: "0 0 * * *"
+    disabled: true
+
+  - id: git_actions_webhook
+    type: io.kestra.plugin.core.trigger.Webhook
+    key: "{{secret('YOUR_WEBHOOK_TOKEN')}}" # Replace with a strong, random key

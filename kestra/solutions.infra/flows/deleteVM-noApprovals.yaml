@@ -1,0 +1,40 @@
+id: deleteVM-noApprovals
+namespace: solutions.infra
+
+inputs:
+  - id: vmAssetId
+    type: SELECT
+    expression: "{{ assets(type='io.kestra.plugin.ee.assets.VM' ) | jq('.[].id')}}"
+
+tasks:
+  - id: vmMetadata
+    type: io.kestra.plugin.core.output.OutputValues
+    values:
+      metadata: "{{ (assets(type='io.kestra.plugin.ee.assets.VM' , id = inputs.vmAssetId) | first).metadata }}"
+
+  - id: deleteVM
+    type: io.kestra.plugin.core.flow.Subflow
+    namespace: "{{ flow.namespace }}"
+    flowId: deprovisionVMUsingTerraform
+    inputs:
+      vmName: "{{ fromJson(outputs.vmMetadata.values.metadata).vmName }}"
+      vmSize: "{{ fromJson(outputs.vmMetadata.values.metadata).vmSize }}"
+      zone: "{{ fromJson(outputs.vmMetadata.values.metadata).zone }}"
+      billingAccount: "{{ fromJson(outputs.vmMetadata.values.metadata).billingAccount }}"
+      osFlavor: "{{ fromJson(outputs.vmMetadata.values.metadata).osFlavor }}"
+      network: "{{ fromJson(outputs.vmMetadata.values.metadata).network }}"
+      subnet: "{{ fromJson(outputs.vmMetadata.values.metadata).subnet }}"
+      ipAddress: "{{ fromJson(outputs.vmMetadata.values.metadata).ipAddress }}"
+    wait: true
+    transmitFailed: true
+    allowWarning: true
+
+labels:
+  - key: "domain"
+    value: "infra"
+  - key: "maintainer"
+    value: "fqazi@kestra.io"
+  - key: "kestra.version"
+    value: "1.2.3"
+  - key: "feature"
+    value: "terraform"
