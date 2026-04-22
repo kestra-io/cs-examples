@@ -26,7 +26,7 @@ inputs:
     defaults: "kestra-admin"
     
   - id: force_cleanup
-    type: BOOLEAN
+    type: BOOL
     defaults: false
     description: "If true, bypasses the approval step"
 
