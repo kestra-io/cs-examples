@@ -1,0 +1,26 @@
+id: create_vm
+namespace: company.team
+
+labels:
+  - key: feature
+    value: assets
+
+inputs:
+  - id: vm_name
+    type: STRING
+    defaults: "windows-web-01"
+
+tasks:
+  - id: gcp_create_instance
+    type: io.kestra.plugin.core.log.Log
+    message: "Provisionioning VM {{ inputs.vm_name }}"
+    assets:
+      outputs:
+        - id: "{{ inputs.vm_name | slugify }}"
+          type: io.kestra.plugin.ee.assets.VM
+          metadata:
+            os: "windows-server-2022"
+            region: "us-central1"
+            status: "running"
+            name: "{{ inputs.vm_name }}"
+            vm: "{{ inputs.vm_name}}"

@@ -1,0 +1,29 @@
+id: onboard_user
+namespace: company.team
+labels:
+  - key: feature
+    value: assets
+inputs:
+  - id: target_vm
+    type: STRING
+    defaults: "windows-web-01"
+  - id: username
+    type: STRING
+    defaults: "admin_user"
+
+tasks:
+  - id: create_windows_user
+    type: io.kestra.plugin.scripts.powershell.Script
+    script: |
+      # PowerShell logic to add user
+      Write-Output "User {{ inputs.username }} added to {{ inputs.target_vm }}"
+    assets:
+      inputs:
+        - id: "{{ inputs.target_vm | slugify }}"
+      outputs:
+        - id: "{{ (inputs.username ~ '-' ~ execution.id) | slugify }}"
+          type: io.kestra.plugin.ee.assets.VM.User
+          metadata:
+            role: "admin"
+            compliance_check: "passed"
+            vm: "{{ inputs.target_vm }}"
