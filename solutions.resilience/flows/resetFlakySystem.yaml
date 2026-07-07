@@ -1,0 +1,23 @@
+id: resetFlakySystem
+namespace: solutions.resilience
+
+description: |
+  Self-recovery subflow. Triggered from dynamicRecovery's restartFlakySystem
+  loop whenever the flaky system call fails — flips the flaky_system_status
+  KV entry back to a healthy status code so the next loop iteration succeeds.
+
+labels:
+  - key: "maintainer"
+    value: "faizan"
+  - key: "feature"
+    value: "resilience"
+
+tasks:
+  - id: reset_flaky_system_status
+    type: io.kestra.plugin.core.kv.Set
+    key: "flaky_system_status"
+    value: "200"
+
+  - id: log_reset
+    type: io.kestra.plugin.core.log.Log
+    message: "🔧 resetFlakySystem: flaky_system_status KV reset to 200 — system restarted"
