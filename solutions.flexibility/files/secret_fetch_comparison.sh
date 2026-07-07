@@ -1,5 +1,5 @@
-#!/bin/bash
-set -e
+#!/bin/sh
+# set -e
 
 # =============================================================================
 # THE HARD WAY (without Kestra)
@@ -51,12 +51,11 @@ set -e
 #
 # and this script only has to do this:
 # =============================================================================
-if [[ -z "${DB_PASSWORD}" ]]; then
+if [ -z "$DB_PASSWORD" ]; then
   echo "DB_PASSWORD was not resolved — configure that secret in Kestra first." >&2
   exit 1
 fi
 
 echo "Connecting to the database using the resolved secret..."
-echo "DB_PASSWORD (masked): ${DB_PASSWORD:0:2}****${DB_PASSWORD: -2}"
-# Bonus: Kestra also auto-redacts secret() values from the execution logs UI —
-# the masking above is just this script being a good citizen on top of that.
+echo "$DB_PASSWORD (masked)"
+# Bonus: Kestra auto-redacts secret() values from the execution logs UI.
