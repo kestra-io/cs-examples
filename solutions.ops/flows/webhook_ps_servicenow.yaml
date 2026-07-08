@@ -200,7 +200,7 @@ errors:
       subcategory: "Application Error"
       contact_type: "Automated Tool"
   - id: send_slack_notification_on_error
-    type: io.kestra.plugin.slack.SlackExecution
+    type: io.kestra.plugin.slack.notifications.SlackExecution
     description: Send a Slack notification on flow error.
     url: "{{ secret(key='SLACK_WEBHOOK',namespace='system') }}"
     messageText: |
