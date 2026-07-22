@@ -1,0 +1,641 @@
+##############################################################################
+# Kestra — Consolidated Sample Configuration Reference
+#
+# Compiled from https://kestra.io/docs/configuration and its sub-pages:
+#   configuration-basics, runtime-and-storage, observability-and-networking,
+#   plugins-and-execution, security-and-secrets, enterprise-and-advanced
+#
+# This is a REFERENCE, not a deploy-ready file. It shows every documented
+# configuration key in one place with brief comments. Several sections are
+# mutually-exclusive alternatives (e.g. storage backends, secret backends,
+# queue/repository backends) — pick ONE per "type" selector and delete/ignore
+# the other backend blocks; they're all shown here just so nothing is missed.
+#
+# Config sources (in order, later overrides earlier): YAML file(s) -> the
+# KESTRA_CONFIGURATION env var -> Docker/Kubernetes/Helm-injected env vars.
+# Env var override naming: uppercase, dots/hyphens -> underscores, prefix
+# KESTRA_ (e.g. kestra.storage.s3.access-key -> KESTRA_STORAGE_S3_ACCESS_KEY).
+# For storage backend secrets specifically, use a DOUBLE underscore in place
+# of the hyphen to avoid Jackson mapping ambiguity, e.g.:
+#   KESTRA_STORAGE_S3_ACCESS__KEY=<aws-access-key-id>
+#   KESTRA_STORAGE_S3_SECRET__KEY=<aws-secret-access-key>
+##############################################################################
+
+# ----------------------------------------------------------------------------
+# JDBC connection pools (HikariCP). Named datasources are referenced by
+# kestra.repository/queue backends of type postgres/mysql/h2/oracle.
+# Docs: https://kestra.io/docs/configuration/runtime-and-storage
+# ----------------------------------------------------------------------------
+datasources:
+  postgres:
+    url: jdbc:postgresql://postgres:5432/kestra   # JDBC URL: jdbc:<driver>://<host>:<port>/<database>
+    driver-class-name: org.postgresql.Driver       # JDBC driver class matching the URL above
+    username: kestra                               # database user
+    password: k3str4                               # database password
+    # catalog:                        # default: driver default
+    # schema:                         # default: driver default
+    # transaction-isolation:          # default: driver default
+    # pool-name: HikariPool-1         # default: auto-generated
+    maximum-pool-size: 20             # default: 10
+    minimum-idle: 10                  # default: 10
+    connection-timeout: 30000         # ms, default: 30000
+    idle-timeout: 600000              # ms, default: 600000
+    max-lifetime: 1800000             # ms, default: 1800000
+    validation-timeout: 5000          # ms, default: 5000
+    initialization-fail-timeout: 1    # default: 1
+    leak-detection-threshold: 0       # ms, 0 = disabled, default: 0
+    # connection-init-sql:            # default: null
+    # connection-test-query:          # default: null
+    # dialect: MYSQL                  # only needed for MySQL/Oracle-family dialects
+
+kestra:
+
+  # --------------------------------------------------------------------------
+  # Repository — persistence backend for flows/executions metadata.
+  # Must be paired with a compatible queue type:
+  #   memory repo <-> memory queue (tests only)
+  #   h2/mysql/postgres repo <-> jdbc queue (same engine family)
+  #   elasticsearch repo <-> kafka queue (Enterprise only)
+  # Docs: https://kestra.io/docs/configuration/runtime-and-storage
+  # --------------------------------------------------------------------------
+  repository:
+    type: postgres   # postgres | mysql | h2 | elasticsearch (EE)
+
+  # --------------------------------------------------------------------------
+  # Queue — internal message bus between server components.
+  # Docs: https://kestra.io/docs/configuration/runtime-and-storage
+  # --------------------------------------------------------------------------
+  queue:
+    type: postgres   # postgres | mysql | h2 | kafka (EE)
+
+  jdbc:   # JDBC-backed queue tuning + cleanup (applies when queue.type is postgres/mysql/h2)
+    queues:
+      poll-size: 100                    # messages polled per interval
+      min-poll-interval: 25ms           # default: 25ms
+      max-poll-interval: 1000ms         # default: 1000ms
+      poll-switch-interval: 5s          # default: 5s
+      message-protection:
+        enabled: true                   # reject oversized queue messages
+        limit: 1048576                  # max message size in bytes
+    cleaner:
+      initial-delay: 1h                 # delay before first queue-table cleanup run
+      fixed-delay: 1h                   # interval between cleanup runs
+      retention: 7d                     # how long to retain processed queue rows
+
+  # --------------------------------------------------------------------------
+  # Internal storage — where flow inputs/outputs/logs/files are persisted.
+  # Set `type` to select the active backend below.
+  # Docs: https://kestra.io/docs/configuration/runtime-and-storage
+  # --------------------------------------------------------------------------
+  storage:
+    type: s3   # local | s3 | gcs | azure | minio | seaweedfs | cloudflare
+
+    local:
+      base-path: /app/storage   # directory on disk where the local backend stores files
+
+    s3:
+      endpoint: "<your-s3-endpoint>"             # S3-compatible endpoint URL (omit for AWS S3 itself)
+      access-key: "<your-aws-access-key-id>"     # AWS access key ID
+      secret-key: "<your-aws-secret-access-key>" # AWS secret access key
+      region: "<your-aws-region>"                # AWS region, e.g. us-east-1
+      bucket: "<your-s3-bucket-name>"            # target S3 bucket name
+      force-path-style: false          # default: false
+      # sts-role-arn: "<role-arn>"               # optional: assume-role via STS
+      # sts-role-external-id: "<optional>"
+      # sts-role-session-name: "<optional>"
+      # sts-role-session-duration: "<optional>"
+      # sts-endpoint-override: "<optional>"
+
+    gcs:
+      bucket: "<bucket>"                                 # GCS bucket name
+      project-id: "<project-id>"                         # GCP project ID
+      service-account: "<JSON key, or omit to use ADC>"  # service-account JSON key content
+
+    azure:
+      endpoint: "https://<account>.blob.core.windows.net"   # Azure Blob Storage account endpoint
+      container: storage                            # blob container name
+      connection-string: "<connection-string>"      # full Azure Storage connection string (alt. to keys below)
+      shared-key-account-name: "<name>"              # storage account name (shared-key auth)
+      shared-key-account-access-key: "<access-key>"  # storage account key (shared-key auth)
+      sas-token: "<sas-token>"                       # shared access signature token (alt. auth method)
+
+    minio:
+      endpoint: my.domain.com          # MinIO server hostname
+      port: 9000                       # MinIO server port
+      secure: false                     # default: false
+      access-key: ${AWS_ACCESS_KEY_ID}       # MinIO access key (env-injected)
+      secret-key: ${AWS_SECRET_ACCESS_KEY}   # MinIO secret key (env-injected)
+      region: "default"                # bucket region label
+      bucket: my-bucket                # target bucket name
+      part-size: 5MB                   # multipart upload chunk size
+      vhost: false                      # default: false
+
+    seaweedfs:
+      filer-host: localhost            # SeaweedFS filer hostname
+      filer-port: 18888                # SeaweedFS filer port
+      prefix: ""                       # key prefix applied to stored objects
+      replication: "000"               # SeaweedFS replication placement string
+
+    cloudflare:                        # Cloudflare R2
+      bucket: "<your-r2-bucket-name>"                        # R2 bucket name
+      accountId: "<your-cloudflare-account-id>"              # Cloudflare account ID
+      accessKeyId: "{{ secret('CLOUDFLARE_R2_ACCESS_KEY') }}"     # R2 access key, pulled from a Kestra secret
+      secretAccessKey: "{{ secret('CLOUDFLARE_R2_SECRET_KEY') }}" # R2 secret key, pulled from a Kestra secret
+      # path: ""                                  # optional key prefix
+      # jurisdiction: ""                          # optional R2 data jurisdiction
+      # endpointOverride: ""                      # optional custom endpoint
+
+    isolation:
+      enabled: true                     # restrict which services can read internal-storage files
+      denied-services:                  # service names blocked from reading storage files
+        - EXECUTOR
+
+  # Local script/working-directory file access (separate from internal storage)
+  # Docs: https://kestra.io/docs/configuration/runtime-and-storage
+  local-files:
+    allowed-paths:                      # host filesystem paths readable by local-file-based tasks
+      - /scripts
+    enable-preview: false               # default: false
+
+  # --------------------------------------------------------------------------
+  # General server identity / URLs / templating
+  # Docs: https://kestra.io/docs/configuration/configuration-basics
+  # --------------------------------------------------------------------------
+  url: "https://kestra.example.com"     # public base URL, no /ui or /api suffix
+
+  environment:
+    name: production                    # display name shown in the UI
+    color: "#FF0000"                    # badge color to visually distinguish envs
+
+  variables:
+    env-vars-prefix: "KESTRA_"          # prefix marking host env vars exposed to flow expressions
+    recursive-rendering: false          # default: false — legacy (pre-0.14) template rendering compat
+    cache-enabled: true                 # cache compiled Pebble templates
+    cache-size: 1000                    # default: 1000
+    # globals:                          # global variables available to every flow
+
+  webserver:
+    google-analytics-id: G-XXXXXXXXXX   # GA measurement ID injected into the UI
+    html-head:                          # raw HTML injected into the UI's <head>
+      - "<script>/* custom tag injected into <head> */</script>"
+
+  # --------------------------------------------------------------------------
+  # Encryption — required for SECRET-type task inputs/outputs
+  # Docs: https://kestra.io/docs/configuration/security-and-secrets
+  # --------------------------------------------------------------------------
+  encryption:
+    secret-key: BASE64_ENCODED_STRING_OF_32_CHARACTERS   # generate: openssl rand -base64 32
+
+  # --------------------------------------------------------------------------
+  # Secret manager backend. Set `type` to select which block below is active.
+  # Docs: https://kestra.io/docs/configuration/security-and-secrets
+  # --------------------------------------------------------------------------
+  secret:
+    type: aws-secret-manager   # jdbc (default) | aws-secret-manager | google-secret-manager
+                               # | azure-key-vault | vault | elasticsearch
+
+    # jdbc: secrets stored in Kestra's own DB tables (not recommended for
+    # production; prefer an external secret backend below).
+    jdbc:
+      secret: "<32-character-minimum-key>"   # encryption key for stored secret values
+
+    aws-secret-manager:
+      access-key-id: mysuperaccesskey        # AWS access key ID
+      secret-key-id: mysupersecret-key       # AWS secret access key
+      session-token: mysupersessiontoken   # optional
+      region: us-east-1                      # AWS region hosting the secrets
+
+    google-secret-manager:
+      project: gcp-project-id                # GCP project ID containing the secrets
+      service-account: |
+        <service-account JSON, optional — falls back to ADC if omitted>
+
+    azure-key-vault:
+      client-secret:
+        tenant-id: "id"                      # Azure AD tenant ID
+        client-id: "id"                      # Azure AD application (client) ID
+        client-secret: "secret"              # Azure AD application client secret
+      isolation:
+        enabled: true
+        denied-services:
+          - EXECUTOR
+
+    vault:
+      address: "http://localhost:8200"       # Vault server address
+      # --- pick ONE auth mode ---
+      password:                          # userpass auth
+        user: john                            # Vault username
+        password: foo                         # Vault password
+      # token:                           # token auth
+      #   token: your-secret-token
+      # app-role:                        # AppRole auth
+      #   path: approle
+      #   role-id: your-role-id
+      #   secret-id: your-secret-id
+
+    elasticsearch:
+      secret: "a-secure-32-character-minimum-key"   # encryption key for stored secret values
+
+    isolation:
+      enabled: true                      # restrict which services can resolve secrets
+      denied-services:
+        - EXECUTOR
+    # tags:                               # metadata for scoping secret lookups
+    cache:
+      enabled: true                       # cache resolved secret values
+      maximum-size: 1000                  # max cached entries
+      expire-after-write: 60s             # cache entry TTL
+
+  # --------------------------------------------------------------------------
+  # Server hardening / auth / liveness
+  # Docs: https://kestra.io/docs/configuration/security-and-secrets
+  # --------------------------------------------------------------------------
+  server:
+    basic-auth:
+      username: admin@kestra.io          # basic-auth login (must be a valid email)
+      password: change-me                # basic-auth password
+      open-urls:                         # endpoints that bypass basic auth (e.g. webhooks)
+        - "/api/v1/main/executions/webhook/"
+    liveness:
+      enabled: true                      # enable the liveness probe
+      interval: 5s                       # check frequency
+      timeout: 45s                       # time before a check is considered failed
+      initial-delay: 45s                 # delay before the first check after startup
+      heartbeat-interval: 3s             # interval between internal heartbeat signals
+    termination-grace-period: 5m         # time allowed for in-flight work to finish on shutdown
+    worker-task-restart-strategy: NEVER  # NEVER | IMMEDIATELY | AFTER_TERMINATION_GRACE_PERIOD
+    service:
+      purge:
+        retention: 7d                    # retention for stopped/terminated service records
+
+  # Docs: https://kestra.io/docs/configuration/security-and-secrets
+  heartbeat:
+    frequency: 10s                       # worker heartbeat emission frequency
+    heartbeat-missed: 3                  # missed heartbeats before a worker is marked dead
+
+  # --------------------------------------------------------------------------
+  # Security / RBAC (Enterprise)
+  # Docs: https://kestra.io/docs/configuration/security-and-secrets
+  # --------------------------------------------------------------------------
+  security:
+    super-admin:
+      username: your_username                    # super-admin login
+      password: ${KESTRA_SUPERADMIN_PASSWORD}   # prefer env injection over plaintext
+      # tenant-admin-access:                     # optional list of tenant IDs
+      #   - <tenant-id>
+    default-role:                         # RBAC role auto-assigned to new users
+      name: default                              # role name
+      description: "Default role"                # role description shown in the UI
+      permissions:
+        FLOW: ["CREATE", "READ", "UPDATE", "DELETE"]   # actions granted per resource type
+      tenant-id: staging                          # tenant this default role applies to
+    basic-auth:
+      password-regexp: ""                 # regex enforcing password complexity
+    invitations:
+      expire-after: P7D                   # ISO-8601 duration, default P7D
+
+  # Docs: https://kestra.io/docs/configuration/security-and-secrets
+  configurations:
+    delete-files-on-start: false          # delete on-disk config files after boot (hide from tasks)
+
+  # --------------------------------------------------------------------------
+  # Telemetry
+  # Docs: https://kestra.io/docs/configuration/observability-and-networking
+  # --------------------------------------------------------------------------
+  anonymous-usage-report:
+    enabled: true                         # default: true
+    initial-delay: 5m                     # delay before the first report is sent
+    fixed-delay: 1h                       # interval between subsequent reports
+
+  ui-anonymous-usage-report:
+    enabled: true                         # default: true — separate toggle for UI-side reporting
+
+  metrics:
+    prefix: kestra                        # prefix applied to all emitted metric names
+    labels:                               # low-cardinality tags attached to every metric
+      - country
+      - environment
+    # OpenTelemetry traces/metrics/logs: see the dedicated OpenTelemetry guide
+
+  # --------------------------------------------------------------------------
+  # Plugins
+  # Docs: https://kestra.io/docs/configuration/plugins-and-execution
+  # --------------------------------------------------------------------------
+  plugins:
+    repositories:                          # extra Maven repos for plugin discovery/install
+      central:
+        url: https://repo.maven.apache.org/maven2/    # Maven Central
+      google-artifact-registry:
+        url: https://${GCP_REGISTRY_LOCATION}-maven.pkg.dev/${GCP_PROJECT_ID}/${GCP_REPOSITORY}   # private GCP Artifact Registry
+        basic-auth:
+          username: oauth2accesstoken            # fixed literal for GCP OAuth2 token auth
+          password: ${GCP_OAUTH_ACCESS_TOKEN}     # short-lived GCP access token
+      kestra-io:
+        url: https://registry.kestra.io/maven     # Kestra's own Enterprise plugin registry
+        basic-auth:
+          username: ${kestra.ee.license.id:}            # EE license ID doubles as the registry username
+          password: ${kestra.ee.license.fingerprint:}   # EE license fingerprint doubles as the password
+
+    management:                            # (EE) centralized plugin lifecycle management
+      enabled: true                        # turn on managed plugin lifecycle
+      remote-storage-enabled: true         # store managed plugins in internal storage vs local disk
+      custom-plugins-enabled: true         # allow installing plugins outside the managed catalog
+      local-repository-path: /tmp/kestra/plugins-repository   # on-disk cache for downloaded plugins
+      auto-reload-enabled: true            # periodically re-check for plugin updates
+      auto-reload-interval: 60s            # how often to check for updates
+      default-version: LATEST              # version resolved when a plugin doesn't pin one
+
+    security:                              # (EE) restrict which plugins can be used
+      includes: []                         # allowlist of permitted plugin namespaces
+      # includes:
+      #   - io.kestra.*                      # allow every official Kestra plugin namespace
+      excludes: []                         # blocklist of prohibited plugins
+      # excludes:
+      #   - io.kestra.plugin.core.debug.Echo         # block the debug/echo task in production
+      #   - io.kestra.plugin.scripts.shell.Commands  # block arbitrary shell command execution
+
+    defaults:                              # default property values applied to matching task types
+      - type: io.kestra.plugin.core.log.Log
+        values:
+          level: ERROR                     # default log level for Log tasks that don't set one
+      - type: io.kestra.plugin.scripts.shell.Commands
+        forced: true                       # true = flows cannot override these values
+        values:
+          containerImage: ubuntu:latest    # default container image for shell Commands tasks
+          taskRunner:
+            type: io.kestra.plugin.scripts.runner.docker.Docker   # default task runner
+
+    configurations:                        # plugin-level feature flags
+      - type: io.kestra.plugin.core.flow.Subflow
+        values:
+          outputs:
+            enabled: true                  # enable subflow outputs
+          recoverMissedSchedules: NONE      # behavior for subflow schedules missed while paused
+          volumeEnabled: true              # enable Docker task-runner volume mounting
+
+  # --------------------------------------------------------------------------
+  # Platform-level retries (internal storage / secret-manager calls — NOT
+  # task-level retries, which are configured per-task in flow YAML)
+  # Docs: https://kestra.io/docs/configuration/plugins-and-execution
+  # --------------------------------------------------------------------------
+  retries:
+    attempts: 5                           # max retry attempts
+    delay: 1s                             # initial delay before the first retry
+    max-delay: ~                          # unset = unbounded exponential backoff growth
+    multiplier: 2.0                       # backoff multiplier applied per retry
+
+  # --------------------------------------------------------------------------
+  # Execution / flow behavior
+  # Docs: https://kestra.io/docs/configuration/plugins-and-execution
+  # --------------------------------------------------------------------------
+  tasks:
+    tmp-dir:
+      path: /tmp/kestra-wd                # working directory for task execution
+
+  system-flows:
+    namespace: system                     # default: system — reserved for internal background flows
+
+  tutorial-flows:
+    enabled: false                        # enable demo/tutorial flow generation
+
+  templates:
+    enabled: false                        # default: false — deprecated feature, only for migration
+
+  pebble:
+    subflow-function:
+      default-timeout: PT1M                # default wait time for a subflow() call
+      max-timeout: PT5M                   # hard cap
+      max-depth: 3                        # max nested subflow() calls
+
+  # --------------------------------------------------------------------------
+  # Elasticsearch (Enterprise) — alternative repository backend
+  # Docs: https://kestra.io/docs/configuration/enterprise-and-advanced
+  # --------------------------------------------------------------------------
+  elasticsearch:
+    client:
+      http-hosts:                          # Elasticsearch node URLs
+        - "http://node-1:9200"
+        - "http://node-2:9200"
+      basic-auth:
+        username: "<your-user>"            # Elasticsearch username
+        password: "<your-password>"        # Elasticsearch password
+      trust-all-ssl: false                 # accept self-signed certs
+
+  indexer:
+    batch-size: 500                        # event batch size for ES indexing
+    batch-duration: PT1S                   # max duration before flushing index batches
+
+  # --------------------------------------------------------------------------
+  # Kafka (Enterprise) — alternative queue backend
+  # Docs: https://kestra.io/docs/configuration/enterprise-and-advanced
+  # --------------------------------------------------------------------------
+  kafka:
+    client:
+      properties:
+        bootstrap.servers: "localhost:9092"     # Kafka broker addresses
+        security.protocol: "SSL"                # transport security protocol
+        ssl.endpoint.identification.algorithm: ""    # disable hostname verification when empty
+        ssl.key.password: "<your-password>"          # SSL key password
+        ssl.keystore.location: "/etc/ssl/private/keystore.p12"    # client keystore path
+        ssl.keystore.password: "<your-password>"     # client keystore password
+        ssl.keystore.type: "PKCS12"                   # keystore format
+        ssl.truststore.location: "/etc/ssl/private/truststore.jks"  # truststore path
+        ssl.truststore.password: "<your-password>"    # truststore password
+    defaults:
+      topic:
+        partitions: 3                      # default partition count for new topics
+        replication-factor: 3              # default replication factor for new topics
+      consumer:
+        properties:
+          isolation.level: "read_committed"    # only read committed transactional messages
+          auto.offset.reset: "earliest"         # where to start reading with no committed offset
+          enable.auto.commit: "false"           # disable automatic offset commits
+      producer:
+        properties:
+          acks: "all"                       # wait for all in-sync replicas to ack
+          compression.type: "lz4"           # message compression codec
+          max.request.size: "10485760"      # max single request size in bytes
+      stream:
+        properties:
+          processing.guarantee: "exactly_once"     # Kafka Streams processing guarantee
+          replication.factor: "${kestra.kafka.defaults.topic.replication-factor}"   # reuse the topic default above
+          acks: "all"                       # wait for all in-sync replicas to ack
+          compression.type: "lz4"           # message compression codec
+          max.request.size: "10485760"      # max single request size in bytes
+          state.dir: "/tmp/kafka-streams"   # local RocksDB state-store directory
+    topics:
+      executions:
+        properties:
+          retention.ms: 604800000           # executions topic retention (7 days, in ms)
+    message-protection:
+      enabled: true                         # reject oversized queue messages
+      limit: 1048576                        # max message size in bytes
+
+  # --------------------------------------------------------------------------
+  # AI Copilot (Enterprise)
+  # Docs: https://kestra.io/docs/configuration/enterprise-and-advanced
+  # --------------------------------------------------------------------------
+  ai:
+    enabled: true                          # set false to fully disable AI Copilot (incl. api.kestra.io fallback)
+    providers:
+      - id: gemini
+        display-name: Gemini - Private     # label shown in the UI's provider picker
+        type: gemini                       # provider implementation to use
+        configuration:
+          model-name: gemini-2.5-flash     # model identifier
+          api-key: YOUR_GEMINI_API_KEY     # provider API key
+      - id: gpt
+        display-name: OpenAI               # label shown in the UI's provider picker
+        type: openai                       # provider implementation to use
+        isDefault: true                    # default provider when multiple are configured
+        configuration:
+          model-name: gpt-4                # model identifier
+          api-key: YOUR_OPENAI_API_KEY     # provider API key
+          # temperature / top-p / top-k / max-output-tokens / log-requests /
+          # log-responses / base-url are also available per-provider
+
+  # --------------------------------------------------------------------------
+  # Enterprise: license, air-gapped mode, internal execution-data storage, mail
+  # Docs: https://kestra.io/docs/configuration/enterprise-and-advanced
+  # --------------------------------------------------------------------------
+  ee:
+    license:
+      id: <license-id>                     # EE license ID
+      fingerprint: <license-fingerprint>   # required for versioned plugin validation
+      key: |
+        <license key content>
+
+    airgapped: false                       # true = UI hides/adapts features needing external services
+
+    tenants:
+      enabled: true                        # enable multi-tenancy -- also required as a prerequisite for SCIM provisioning
+
+    execution-data:
+      internal-storage:
+        enabled: false                     # store execution I/O internally instead of externally
+        force-globally: false              # enforce internal storage everywhere
+
+    mail-service:
+      host: host.smtp.io                   # SMTP server hostname
+      port: 587                            # SMTP server port
+      username: user                       # SMTP auth username
+      password: password                   # SMTP auth password
+      from: configurable@mail.com          # sender address for outgoing mail
+      from-name: Kestra                    # sender display name
+      auth: true                           # enable SMTP authentication
+      starttls-enable: true                # upgrade the connection with STARTTLS
+
+##############################################################################
+# Logging (Logback-based). Root key is `logger`, a sibling of `kestra`.
+# Docs: https://kestra.io/docs/configuration/observability-and-networking
+##############################################################################
+logger:
+  levels:
+    io.kestra.core.runners: TRACE          # per-package log level override
+    org.apache.kafka: DEBUG                # another per-package log level override
+    # Other packages commonly useful to bump when troubleshooting:
+    # io.kestra.scheduler: TRACE            # trigger evaluation / schedule polling
+    # io.kestra.executor: TRACE             # flow evaluation / task dispatch
+    # io.kestra.webserver.access: TRACE     # HTTP access logging (see micronaut.server.netty.access-logger too)
+    # io.kestra.plugin.core.http: TRACE     # core HTTP-based tasks/triggers
+    # io.netty.handler.logging: TRACE       # raw Netty wire-level traffic
+    # io.micronaut.http.server: TRACE       # Micronaut HTTP server internals
+    # io.micronaut.server: TRACE            # Micronaut server startup/routing internals
+    # io.fabric8.kubernetes: TRACE          # Kubernetes client calls (task runner pod scheduling, etc.)
+    # Suppress all execution/task/trigger logs globally:
+    # execution: 'OFF'
+    # task: 'OFF'
+    # trigger: 'OFF'
+    # Suppress logs for one specific flow:
+    # execution.hello-world: 'OFF'
+    # task.hello-world: 'OFF'
+    # trigger.hello-world: 'OFF'
+    # Suppress logs for a specific task/trigger within a flow:
+    # task.hello-world.log: 'OFF'
+    # trigger.hello-world.schedule: 'OFF'
+# Custom Logback config file: JAVA_OPTS=-Dlogback.configurationFile=...
+# Structured JSON logging: include logback/gcp.xml (GCP format) or
+# logback/ecs.xml (ECS format) in your Logback config.
+
+##############################################################################
+# Micronaut management endpoints (health, prometheus, etc). Root key is
+# `endpoints`, a sibling of `kestra`.
+# Docs: https://kestra.io/docs/configuration/observability-and-networking
+##############################################################################
+endpoints:
+  all:
+    basic-auth:
+      username: your-user                  # management-endpoint basic-auth username
+      password: your-password              # management-endpoint basic-auth password
+    port: 8084                             # dedicated port to isolate mgmt endpoints from main app port
+
+##############################################################################
+# Micronaut framework settings — HTTP server, TLS, CORS, file watching.
+# Root key is `micronaut`, a sibling of `kestra`.
+# Docs: https://kestra.io/docs/configuration/observability-and-networking
+##############################################################################
+micronaut:
+  server:
+    port: 8086                             # default: 8086
+    max-request-size: 10GB                 # max size of an incoming HTTP request body
+    multipart:
+      max-file-size: 10GB                  # max size of a single uploaded file
+      disk: true                           # buffer uploaded files to disk instead of memory
+    read-idle-timeout: 60m                 # close the connection if nothing is read for this long
+    write-idle-timeout: 60m                # close the connection if nothing is written for this long
+    idle-timeout: 60m                      # overall connection idle timeout
+    netty:
+      max-chunk-size: 10MB                 # max HTTP chunk size Netty will buffer
+      access-logger:
+        enabled: true                      # emit an access-log line per HTTP request
+        logger-name: io.kestra.webserver.access   # Logback logger name to emit access logs under
+        log-format: "[Date: {}] [Duration: {} ms] [Method: {}] [Url: {}] [Status: {}] [Length: {}] [Ip: {}] [Port: {}]"   # access-log line format
+        exclusions:                        # URL patterns excluded from access logging
+          - /ui/.+
+          - /health
+          - /prometheus
+    context-path: "kestra-prd"              # for reverse-proxy sub-path deployment
+    host-resolution:
+      host-header: Host                    # header used to resolve the original request host
+      protocol-header: X-Forwarded-Proto   # header used to resolve the original request protocol
+    cors:
+      enabled: true                        # enable CORS handling
+    ssl:
+      client-authentication: need           # mTLS: require client certs
+      key-store:
+        path: classpath:ssl/keystore.p12    # server TLS keystore location
+        password: ${KEYSTORE_PASSWORD}      # keystore password
+        type: PKCS12                        # keystore format
+      trust-store:
+        path: classpath:ssl/truststore.jks  # truststore used to validate client certs
+        password: ${TRUSTSTORE_PASSWORD}    # truststore password
+        type: JKS                           # truststore format
+
+  security:                                # mTLS + session/token + SSO config
+                                            # Docs: https://kestra.io/docs/configuration/security-and-secrets
+    x509:
+      enabled: true                         # enable client-certificate (mTLS) authentication
+    token:                                  # user session duration (JWT access token + browser cookie)
+      generator:
+        access-token:
+          expiration: 36000                 # seconds; keep in sync with cookie.cookie-max-age below
+      cookie:
+        cookie-max-age: 10h                 # browser session-cookie lifetime
+    oauth2:                                 # (EE) OIDC SSO -- Docs: https://kestra.io/docs/enterprise/auth/sso/microsoft-oidc
+      enabled: true
+      clients:
+        microsoft:                         # arbitrary client key; referenced in the login UI and callback URL
+          client-id: "<your-azure-client-id>"          # Entra ID App Registration client ID
+          client-secret: "<your-azure-client-secret>"  # Entra ID App Registration client secret
+          openid:
+            # trailing slash required; redirect URI to register in Entra ID:
+            # https://<your-kestra-url>/oauth/callback/microsoft
+            issuer: "https://login.microsoftonline.com/<your-tenant-id>/v2.0/"
+
+  ssl:
+    enabled: true                           # enable HTTPS on the main server port
+
+  io:
+    watch:                                  # Docs: https://kestra.io/docs/configuration/plugins-and-execution
+      enabled: false                        # watch local filesystem paths and sync flows from disk
+      paths: []                             # filesystem paths to watch when enabled
