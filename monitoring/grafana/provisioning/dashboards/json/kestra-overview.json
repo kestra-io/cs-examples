@@ -1,0 +1,1412 @@
+{
+  "id": null,
+  "uid": "kestra-overview",
+  "title": "Kestra Overview",
+  "tags": [
+    "kestra"
+  ],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 15,
+  "refresh": "10s",
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
+  "panels": [
+    {
+      "id": 100,
+      "title": "Kestra Application",
+      "type": "row",
+      "collapsed": false,
+      "panels": [],
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": 1,
+      "title": "Worker Jobs Running",
+      "description": "Number of task jobs currently executing across all worker threads. Compare against Worker Job Threads to see how close you are to full capacity.",
+      "type": "stat",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 6,
+        "x": 0,
+        "y": 1
+      },
+      "targets": [
+        {
+          "expr": "sum(kestra_worker_job_running)",
+          "legendFormat": "running",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 2,
+      "title": "Worker Jobs Pending",
+      "description": "Task jobs waiting for a free worker thread right now. Non-zero and sustained means your worker thread pool is undersized for the current load: add threads or worker replicas.",
+      "type": "stat",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 6,
+        "x": 6,
+        "y": 1
+      },
+      "targets": [
+        {
+          "expr": "sum(kestra_worker_job_pending)",
+          "legendFormat": "pending",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 10
+              },
+              {
+                "color": "red",
+                "value": 50
+              }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 3,
+      "title": "Worker Job Threads",
+      "description": "Total worker thread capacity currently available. This is your ceiling for concurrent task execution.",
+      "type": "stat",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 6,
+        "x": 12,
+        "y": 1
+      },
+      "targets": [
+        {
+          "expr": "sum(kestra_worker_job_thread)",
+          "legendFormat": "threads",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 4,
+      "title": "Queue Poll Size",
+      "description": "Messages sitting in Kestra's internal queue waiting to be picked up by any consumer (scheduler, executor, indexer). A general backlog indicator across the whole system, not just workers.",
+      "type": "stat",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 6,
+        "x": 18,
+        "y": 1
+      },
+      "targets": [
+        {
+          "expr": "sum(kestra_queue_poll_size)",
+          "legendFormat": "poll size",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 14,
+      "title": "Worker Thread Pool Utilization %",
+      "description": "Running jobs as a percentage of total worker threads, per worker instance (not summed globally, a worker group that isn't receiving tasks would otherwise dilute a genuinely saturated one). Dashed lines mark 80% (yellow) and 95% (red). Sustained above the red line on any instance, together with a non-zero Worker Jobs Pending, is the clearest signal to add worker threads or worker replicas to that instance.",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 7
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "max": 100,
+          "min": 0,
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "dashed"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 80
+              },
+              {
+                "color": "red",
+                "value": 95
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "100 * sum(kestra_worker_job_running) by (instance) / sum(kestra_worker_job_thread) by (instance)",
+          "legendFormat": "{{instance}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 20,
+      "title": "JVM Heap Utilization %",
+      "description": "Heap memory used as a percentage of max heap, per process (not summed globally, four independent JVMs share this dashboard and a global average would let one running hot hide behind the others). Dashed lines mark 70% (yellow) and 90% (red). Sustained above the red line on any instance increases GC pressure and can slow that process down even when thread and DB pool capacity look fine: increase container/heap memory for that instance.",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 7
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "max": 100,
+          "min": 0,
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "dashed"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 70
+              },
+              {
+                "color": "red",
+                "value": 90
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "100 * sum(jvm_memory_used_bytes{area=\"heap\"}) by (instance) / sum(jvm_memory_max_bytes{area=\"heap\"} > 0) by (instance)",
+          "legendFormat": "{{instance}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 23,
+      "title": "JVM Heap Used vs Max (Actual, per instance)",
+      "description": "The real numbers behind the JVM Heap Utilization % panel: actual bytes used (solid line) against the current max heap ceiling for each process (dashed line). Max heap ceilings (-Xmx, fixed by config, as of 2026-07-21): kestra-webserver 1024m, kestra-executor 640m, kestra-scheduler 512m, kestra-worker 384m. Use 'used' at PEAK load, not a point-in-time reading, to size -Xmx: pick -Xmx around 1.3-1.5x observed peak used, since G1GC needs headroom above your working set to avoid constant collection. Every container also has an explicit deploy.resources.limits.memory cap above this heap ceiling for non-heap overhead (metaspace, thread stacks, direct buffers) -- see Container Memory Limit by Service below; size any future -Xmx change together with that container limit, not in isolation.",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 15
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "overrides": []
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/max ceiling$/"
+            },
+            "properties": [
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "dash": [10, 10],
+                  "fill": "dash"
+                }
+              },
+              {
+                "id": "custom.fillOpacity",
+                "value": 0
+              }
+            ]
+          }
+        ]
+      },
+      "targets": [
+        {
+          "expr": "sum(jvm_memory_used_bytes{area=\"heap\"}) by (instance)",
+          "legendFormat": "{{instance}} used",
+          "refId": "A"
+        },
+        {
+          "expr": "sum(jvm_memory_max_bytes{area=\"heap\"} > 0) by (instance)",
+          "legendFormat": "{{instance}} max ceiling",
+          "refId": "B"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "Executor Thread Count",
+      "description": "Threads used by the executor to process task runs and orchestrate flow state. Sustained growth without a corresponding rise in throughput can indicate the executor itself is falling behind.",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 23
+      },
+      "targets": [
+        {
+          "expr": "sum(kestra_executor_thread_count) by (instance)",
+          "legendFormat": "{{instance}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "title": "Worker Tasks Started vs Ended (rate)",
+      "description": "Leading indicator of backlog: if 'started' consistently runs ahead of 'ended', a queue is building even before Worker Jobs Pending visibly rises.",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 23
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(kestra_worker_started_count_total[5m]))",
+          "legendFormat": "started",
+          "refId": "A"
+        },
+        {
+          "expr": "sum(rate(kestra_worker_ended_count_total[5m]))",
+          "legendFormat": "ended",
+          "refId": "B"
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "title": "Executions Started vs Ended (rate)",
+      "description": "Same leading-indicator logic as task start/end, but at the whole-flow-execution level. A gap here means executions are piling up faster than they finish.",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 31
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(kestra_executor_execution_started_count_total[5m]))",
+          "legendFormat": "started",
+          "refId": "A"
+        },
+        {
+          "expr": "sum(rate(kestra_executor_execution_end_count_total[5m]))",
+          "legendFormat": "ended",
+          "refId": "B"
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "title": "Avg Execution Duration",
+      "description": "Average end-to-end duration of a flow execution. A rising trend under steady load suggests resource contention somewhere downstream (workers, DB, or scheduler), not just naturally longer flows.",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 31
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(kestra_executor_execution_duration_seconds_sum[5m])) / sum(rate(kestra_executor_execution_duration_seconds_count[5m]))",
+          "legendFormat": "avg duration",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 9,
+      "title": "Scheduler Evaluate / Loop Rate",
+      "description": "How often the scheduler evaluates triggers and completes its loop. A dropping rate under steady trigger volume means the scheduler is falling behind: a distinct bottleneck from worker capacity.",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 39
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(kestra_scheduler_evaluate_count_total[5m]))",
+          "legendFormat": "evaluate",
+          "refId": "A"
+        },
+        {
+          "expr": "sum(rate(kestra_scheduler_loop_count_total[5m]))",
+          "legendFormat": "loop",
+          "refId": "B"
+        }
+      ]
+    },
+    {
+      "id": 10,
+      "title": "Scheduler Trigger Evaluation Duration (avg)",
+      "description": "Average time to evaluate a single trigger. Rising values mean triggers may fire late even if your workers have spare capacity: this points at scheduler/trigger tuning, not worker scaling.",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 39
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(kestra_scheduler_trigger_evaluation_duration_seconds_sum[5m])) / sum(rate(kestra_scheduler_trigger_evaluation_duration_seconds_count[5m]))",
+          "legendFormat": "avg duration",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 15,
+      "title": "Avg Worker Task Duration",
+      "description": "Average time a single task occupies a worker thread. Compare against Worker Thread Pool Utilization: if duration climbs while utilization is pegged near 100%, tasks are likely being slowed by resource contention (CPU throttling), not genuinely taking longer.",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 47
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(kestra_worker_ended_duration_seconds_sum[5m])) / sum(rate(kestra_worker_ended_duration_seconds_count[5m]))",
+          "legendFormat": "avg duration",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 16,
+      "title": "Scheduler Evaluation Loop Duration (avg)",
+      "description": "Average time for one full scheduler evaluation loop across all triggers. A creeping upward trend means trigger firing is falling behind schedule: the fix is scheduler/trigger tuning, not adding worker threads.",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 47
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(kestra_scheduler_evaluation_loop_duration_seconds_sum[5m])) / sum(rate(kestra_scheduler_evaluation_loop_duration_seconds_count[5m]))",
+          "legendFormat": "avg loop duration",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 11,
+      "title": "Queue Produce Rate",
+      "description": "Rate of messages written to the internal queue. Compare visually against consumption-side metrics (Worker Jobs Running, Scheduler Loop Rate): if production consistently outpaces consumption, backlog is building somewhere in the pipeline.",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 55
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(kestra_queue_produce_count_total[5m])) by (instance)",
+          "legendFormat": "{{instance}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 12,
+      "title": "Queue Receive Duration (avg)",
+      "description": "Average time to pull a message off the internal queue. Rising values usually trace back to database contention, since the queue is Postgres-backed in this deployment.",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 55
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(kestra_queue_receive_duration_seconds_sum[5m])) / sum(rate(kestra_queue_receive_duration_seconds_count[5m]))",
+          "legendFormat": "avg duration",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 22,
+      "title": "Task Queued Time (Worker, avg / max)",
+      "description": "Actual time each task spent queued before a worker thread picked it up (a measured duration, not a point-in-time count). Dashed lines mark 1s (yellow) and 5s (red). Sustained above the red line means tasks are experiencing real user-facing delay: add worker threads or worker replicas. Compare against Worker Thread Pool Utilization % to confirm thread saturation is the cause. Note: max is a Micrometer decaying-window value and reads 0 once nothing has queued for a couple of minutes, that's expected, not broken.",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 63
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "dashed"
+            },
+            "axisSoftMin": 0,
+            "axisSoftMax": 6
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 1
+              },
+              {
+                "color": "red",
+                "value": 5
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(kestra_worker_queued_duration_seconds_sum[5m])) / sum(rate(kestra_worker_queued_duration_seconds_count[5m]))",
+          "legendFormat": "avg queued time",
+          "refId": "A"
+        },
+        {
+          "expr": "sum(kestra_worker_queued_duration_seconds_max)",
+          "legendFormat": "max queued time",
+          "refId": "B"
+        }
+      ]
+    },
+    {
+      "id": 21,
+      "title": "HTTP Server Request Rate (excl. health/metrics)",
+      "description": "API request rate by endpoint, excluding health checks and the metrics scrape itself. Useful to see whether UI/API load, not just flow execution, is contributing to overall system pressure.",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 71
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(http_server_requests_seconds_count{uri!~\"/health|/prometheus\"}[5m])) by (uri)",
+          "legendFormat": "{{uri}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 101,
+      "title": "Database (Postgres / HikariCP / JDBC)",
+      "type": "row",
+      "collapsed": false,
+      "panels": [],
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 79
+      }
+    },
+    {
+      "id": 17,
+      "title": "DB Pool Utilization (Active / Max)",
+      "description": "Active Postgres connections as a percentage of the configured pool max (maximum-pool-size in this compose config). Dashed lines mark 80% (yellow) and 95% (red). Sustained above the red line means the DB pool, not worker threads, is your real ceiling: raise maximum-pool-size.",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 80
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "max": 100,
+          "min": 0,
+          "color": {
+            "mode": "thresholds"
+          },
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "dashed"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 80
+              },
+              {
+                "color": "red",
+                "value": 95
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "100 * sum(hikaricp_connections_active) / sum(hikaricp_connections_max)",
+          "legendFormat": "utilization",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 18,
+      "title": "DB Pool Pending Connections",
+      "description": "Threads blocked waiting for a free database connection. Dashed red line at 1: this metric should sit at 0, so any time it crosses the line, adding worker threads won't help until the pool size itself is increased. A distinct bottleneck from worker thread saturation.",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 80
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "dashed"
+            },
+            "axisSoftMin": 0,
+            "axisSoftMax": 5
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "sum(hikaricp_connections_pending)",
+          "legendFormat": "pending",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 19,
+      "title": "DB Connection Acquire Time (avg)",
+      "description": "Average time to acquire a database connection from the pool. Dashed lines mark 50ms (yellow) and 500ms (red) as general HikariCP guidance, tune to your own baseline once you know normal traffic. A rising trend precedes full pool exhaustion: an early warning before Pending Connections goes non-zero.",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 80
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "color": {
+            "mode": "thresholds"
+          },
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "dashed"
+            },
+            "axisSoftMin": 0,
+            "axisSoftMax": 1
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 0.05
+              },
+              {
+                "color": "red",
+                "value": 0.5
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(hikaricp_connections_acquire_seconds_sum[5m])) / sum(rate(hikaricp_connections_acquire_seconds_count[5m]))",
+          "legendFormat": "avg acquire time",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 13,
+      "title": "JDBC Query Duration (avg / max)",
+      "description": "Average and worst-case Postgres query latency. Since the queue, repository, and scheduler all share this database, slow queries here can explain slowdowns everywhere else.",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 88
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(kestra_jdbc_query_duration_seconds_sum[5m])) / sum(rate(kestra_jdbc_query_duration_seconds_count[5m]))",
+          "legendFormat": "avg",
+          "refId": "A"
+        },
+        {
+          "expr": "sum(kestra_jdbc_query_duration_seconds_max)",
+          "legendFormat": "max",
+          "refId": "B"
+        }
+      ]
+    },
+    {
+      "id": 102,
+      "title": "Host Metrics (node-exporter)",
+      "type": "row",
+      "collapsed": false,
+      "panels": [],
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 96
+      }
+    },
+    {
+      "id": 24,
+      "title": "Host CPU Utilization %",
+      "description": "Total CPU busy time across all cores on the machine running the containers (via node-exporter). Dashed lines mark 80% (yellow) and 95% (red). This is the real ceiling behind every JVM and container above: sustained high host CPU will slow every process at once regardless of individual thread pool or heap headroom.",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 97
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "max": 100,
+          "min": 0,
+          "color": {
+            "mode": "thresholds"
+          },
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "dashed"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 80
+              },
+              {
+                "color": "red",
+                "value": 95
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "100 - (avg(rate(node_cpu_seconds_total{mode=\"idle\"}[5m])) * 100)",
+          "legendFormat": "cpu utilization",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 25,
+      "title": "Host Memory Utilization %",
+      "description": "Host RAM in use as a percentage of total (via node-exporter, MemAvailable-based so page cache doesn't count as 'used'). Dashed lines mark 80% (yellow) and 95% (red). As of 2026-07-21, -Xmx and a deploy.resources.limits.memory cap are set explicitly on all 4 Kestra JVMs plus every sidecar (see Container Metrics section below), and the redundant kestra-worker-wg1 was disabled, bringing this down from ~94% to ~70-75% by design. If this climbs back toward 80%+, check the Container Memory Working Set panel for which service grew before adding capacity.",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 97
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "max": 100,
+          "min": 0,
+          "color": {
+            "mode": "thresholds"
+          },
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "dashed"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 80
+              },
+              {
+                "color": "red",
+                "value": 95
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "100 * (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes))",
+          "legendFormat": "memory utilization",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 26,
+      "title": "Host Memory Used vs Total (Actual)",
+      "description": "The real numbers behind Host Memory Utilization %: bytes used (solid) against total host RAM (dashed). Directly comparable to the JVM Heap Used vs Max panel above: sum the 'used' lines from that panel and compare against this total to see how much of the box's actual memory the JVMs plus everything else (Postgres, Traefik, Grafana, Prometheus) are consuming.",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 105
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "overrides": []
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/total$/"
+            },
+            "properties": [
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "dash": [
+                    10,
+                    10
+                  ],
+                  "fill": "dash"
+                }
+              },
+              {
+                "id": "custom.fillOpacity",
+                "value": 0
+              }
+            ]
+          }
+        ]
+      },
+      "targets": [
+        {
+          "expr": "node_memory_MemTotal_bytes - node_memory_MemAvailable_bytes",
+          "legendFormat": "host memory used",
+          "refId": "A"
+        },
+        {
+          "expr": "node_memory_MemTotal_bytes",
+          "legendFormat": "host memory total",
+          "refId": "B"
+        }
+      ]
+    },
+    {
+      "id": 27,
+      "title": "Host Disk Consumed (%)",
+      "description": "Disk space consumed on the filesystem backing Docker's storage (named volumes, container layers, images) via node-exporter, shown as a battery-style gauge. Thresholds at 80% (yellow) and 95% (red). A full disk here can crash containers outright: Postgres and Kestra's local storage both fail writes when out of space, and the Docker daemon itself can misbehave. This is one filesystem shared by all named volumes (kestra-data, postgres-data, grafana-data, prometheus-data), not broken out per-volume, since Docker's local volume driver doesn't give each volume its own quota.",
+      "type": "bargauge",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 113
+      },
+      "options": {
+        "displayMode": "gradient",
+        "orientation": "horizontal"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "max": 100,
+          "min": 0,
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 80
+              },
+              {
+                "color": "red",
+                "value": 95
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "100 * (1 - (node_filesystem_avail_bytes{mountpoint=\"/\", fstype=\"ext4\"} / node_filesystem_size_bytes{mountpoint=\"/\", fstype=\"ext4\"}))",
+          "legendFormat": "disk consumed %",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 103,
+      "title": "Container Metrics (cAdvisor)",
+      "type": "row",
+      "collapsed": false,
+      "panels": [],
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 121
+      }
+    },
+    {
+      "id": 29,
+      "title": "Container Memory Working Set by Service (cAdvisor)",
+      "description": "Actual resident memory per container (stacked), broken out by the docker-compose service name cAdvisor attaches to each cgroup. Every container now has a deploy.resources.limits.memory cap (see panel below), sized as of 2026-07-21 around 1.2-1.3x the peak observed here at the time -- not the JVM Xmx alone, since JVM processes also carry metaspace, thread stacks and direct-buffer overhead outside the heap. Use this panel going forward to watch whether any service is trending back toward its cap.",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 24,
+        "x": 0,
+        "y": 122
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            },
+            "fillOpacity": 25
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "sum(container_memory_working_set_bytes{service!=\"\"}) by (service)",
+          "legendFormat": "{{service}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 30,
+      "title": "Current Memory Usage by Service (% of Host)",
+      "description": "Snapshot ranking of each container's working set as a percentage of total host RAM, right now. Thresholds at 15% (yellow) and 30% (red) flag any single service that's disproportionately large relative to the whole box. Now that every service has a memory limit (set 2026-07-21), use this to catch a service creeping back up before it hits its cap, rather than to pick an initial candidate to limit.",
+      "type": "bargauge",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 131
+      },
+      "options": {
+        "displayMode": "gradient",
+        "orientation": "horizontal"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "max": 100,
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 15
+              },
+              {
+                "color": "red",
+                "value": 30
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "100 * sum(container_memory_working_set_bytes{service!=\"\"}) by (service) / scalar(node_memory_MemTotal_bytes)",
+          "legendFormat": "{{service}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 31,
+      "title": "Container CPU Usage (cores) by Service",
+      "description": "CPU cores actively consumed per container over the last 5m (rate of cumulative usage, not a percentage of a limit since none are set yet). Compare against the box's total core count to see headroom, and against Host CPU Utilization % above to see how much of total host CPU each service accounts for.",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 131
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(container_cpu_usage_seconds_total{service!=\"\"}[5m])) by (service)",
+          "legendFormat": "{{service}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 32,
+      "title": "Container Memory Limit by Service",
+      "description": "The configured 'deploy.resources.limits.memory' per container, as cAdvisor sees it. As of 2026-07-21 every service has an explicit limit (kestra-webserver 1408M, kestra-executor 896M, kestra-scheduler 1024M, kestra-worker 768M, postgres/grafana/prometheus 512M each, cadvisor 256M, traefik 128M, node-exporter 64M) -- expect flat lines at those values. If any line reads 0 or doesn't match docker-compose.yml, that container didn't pick up its limit on last recreate and needs a `docker compose up -d` for that service.",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 139
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "sum(container_spec_memory_limit_bytes{service!=\"\"}) by (service)",
+          "legendFormat": "{{service}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 33,
+      "title": "Host Memory: Sum of Containers vs Host Used vs Host Total",
+      "description": "Reconciles the container-level view against the host-level view: sum of all container working sets, host memory actually used (from node-exporter), and host total. The gap between 'sum of containers' and 'host used' is page cache, the Docker daemon itself, and other non-container host processes, not something any per-service memory limit will touch.",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 139
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "overrides": []
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/total$/"
+            },
+            "properties": [
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "dash": [
+                    10,
+                    10
+                  ],
+                  "fill": "dash"
+                }
+              },
+              {
+                "id": "custom.fillOpacity",
+                "value": 0
+              }
+            ]
+          }
+        ]
+      },
+      "targets": [
+        {
+          "expr": "sum(container_memory_working_set_bytes{service!=\"\"})",
+          "legendFormat": "sum of containers",
+          "refId": "A"
+        },
+        {
+          "expr": "node_memory_MemTotal_bytes - node_memory_MemAvailable_bytes",
+          "legendFormat": "host used",
+          "refId": "B"
+        },
+        {
+          "expr": "node_memory_MemTotal_bytes",
+          "legendFormat": "host total",
+          "refId": "C"
+        }
+      ]
+    }
+  ]
+}
