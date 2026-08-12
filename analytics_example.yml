@@ -1,0 +1,156 @@
+id: analytics_example
+namespace: solutions
+description: "Extracts data from MySQL, loads into Snowflake, processes with dbt, and tracks assets."
+
+triggers:
+  - id: daily_extraction
+    type: io.kestra.plugin.core.trigger.Schedule
+    cron: "0 6,14,22 * * *" # Triggers at 6 AM, 2 PM, and 10 PM daily
+  - id: kafka
+    type: io.kestra.plugin.kafka.RealtimeTrigger
+    topic: trigger-topic
+    groupId: my_kestra_trigger
+    properties:
+      bootstrap.servers: "{{secret('KAFKA_SERVER')}}"
+      security.protocol: SASL_SSL
+      sasl.mechanism: SCRAM-SHA-256
+      ssl.truststore.type: PEM
+      ssl.truststore.certificates: "{{secret('KAFKA_CERT')}}"
+      sasl.jaas.config: "org.apache.kafka.common.security.scram.ScramLoginModule required username=\"{{secret('KAFKA_SASL_USERNAME')}}\" password=\"{{secret('KAFKA_SASL_PASSWORD')}}\";"
+tasks:
+  - id: extract_from_mysql
+    type: io.kestra.plugin.jdbc.mysql.Query
+    sql: | 
+      SELECT tail_number, model_name, component_category, supplier_name,
+             inspection_date, result, defect_code, labor_hours
+      FROM quality_inspections
+      WHERE created_at >= '{{ kv('MYSQL_LAST_UPDATE') ?? 0 }}'
+
+    fetchType: STORE
+    assets:
+      outputs:
+        - id: mysql_aircraft_data
+          type: io.kestra.plugin.ee.assets.Table
+          value: "{{ outputs.extract_from_mysql.uri }}"
+          description: "Raw aircraft production data extracted from MySQL"
+          metadata: 
+            size: "{{outputs.extract_from_mysql.size}}"
+
+  - id: convert_to_csv
+    type: io.kestra.plugin.serdes.csv.IonToCsv
+    from: "{{ outputs.extract_from_mysql.uri }}"
+    header: true
+    assets:
+      inputs:
+        - id: mysql_aircraft_data
+          type: io.kestra.plugin.ee.assets.Table
+      outputs:
+        - id: mysql_aircraft_data
+          type: io.kestra.plugin.ee.assets.Table
+
+
+  - id: upload_to_snowflake
+    type: io.kestra.plugin.jdbc.snowflake.Upload
+    from: "{{ outputs.convert_to_csv.uri }}"
+    fileName: aircraft_production_data.csv
+    prefix: raw
+    stageName: "@demo.public.quality"
+    assets:
+      inputs:
+        - id: mysql_aircraft_data
+          type: io.kestra.plugin.ee.assets.Dataset
+      outputs:
+        - id: snowflake_input_data
+          type: io.kestra.plugin.ee.assets.Dataset
+          value: "{{ outputs.upload_to_snowflake.uri }}"
+          description: "Aircraft production data staged in Snowflake"
+
+  - id: create_csv
+    type: io.kestra.plugin.jdbc.snowflake.Query
+    sql: |
+      CREATE FILE FORMAT IF NOT EXISTS demo.public.csv_format
+        TYPE = 'CSV' SKIP_HEADER = 1
+        FIELD_OPTIONALLY_ENCLOSED_BY = '"' NULL_IF = ('', 'NULL');
+  - id: create_table
+    type: io.kestra.plugin.jdbc.snowflake.Query
+    sql: |
+      CREATE OR REPLACE TABLE demo.public.aircraft_production_data (
+        tail_number         STRING,
+        model_name          STRING,
+        component_category  STRING,
+        supplier_name       STRING,
+        inspection_date     DATE,
+        result              STRING,
+        defect_code         STRING,
+        labor_hours         NUMBER(6,2)
+      );
+    assets:
+      inputs:
+        - id: snowflake_input_data
+          type: io.kestra.plugin.ee.assets.Dataset
+
+  - id: load_data_in_table
+    type: io.kestra.plugin.jdbc.snowflake.Query
+    sql: |
+      COPY INTO demo.public.aircraft_production_data
+        FROM @demo.public.quality/raw/aircraft_production_data.csv.gz
+        FILE_FORMAT = (TYPE = 'CSV' SKIP_HEADER = 1 FIELD_OPTIONALLY_ENCLOSED_BY = '"' NULL_IF = ('', 'NULL'))
+        ON_ERROR = 'ABORT_STATEMENT';
+    assets:
+      inputs:
+        - id: snowflake_input_data
+          type: io.kestra.plugin.ee.assets.Dataset
+      outputs:
+        - id: snowflake_staged_data
+          type: io.kestra.plugin.ee.assets.Dataset
+
+  - id: dbt_transform
+    type: io.kestra.plugin.dbt.cli.DbtCLI
+    containerImage: ghcr.io/kestra-io/dbt-snowflake:latest
+    # version: 1.8.0
+    commands:
+      - dbt deps
+      - dbt build
+      - dbt run --models aircraft_production_metrics
+    namespaceFiles:
+      enabled: true
+    projectDir: .
+    allowWarning: true
+    profiles: |
+      aircraft_analytics:
+        outputs:
+          dev:
+            type: snowflake
+            account: {{secret('SNOWFLAKE_ACCOUNT')}}
+            user: "{{ secret('SNOWFLAKE_USERNAME') }}"
+            private_key: "{{secret('SNOWFLAKE_KEY')}}"          
+            role: ACCOUNTADMIN
+            warehouse: COMPUTE_WH
+            database: demo
+            schema: public
+            threads: 4
+            client_session_keep_alive: False
+        target: dev
+    assets:
+      enableAuto: true
+      # inputs:
+      #   - id: snowflake_staged_data
+      #     type: io.kestra.plugin.ee.assets.Dataset
+      # outputs:
+      #   - id: dbt_transformed_data
+      #     type: io.kestra.plugin.ee.assets.Dataset          
+      #     value: "snowflake://demo/public/aircraft_production_metrics" # Example URI for a dbt model
+      #     description: "Transformed aircraft production metrics from dbt"
+
+sla:
+  - id: flow_max_duration
+    type: MAX_DURATION
+    duration: PT1H # 1 hour
+    behavior: FAIL
+
+errors:
+  - id: send_slack_notification
+    type: io.kestra.plugin.slack.notifications.SlackExecution
+    url: "{{ secret('SLACK_WEBHOOK_URL') }}"
+    executionId: "{{ execution.id }}"
+    customMessage: "Kestra Flow '{{ flow.id }}' in namespace '{{ flow.namespace }}' failed! Execution ID: {{ execution.id }}. See details: {{ execution.webUiLink }}"

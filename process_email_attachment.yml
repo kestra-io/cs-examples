@@ -1,0 +1,22 @@
+id: process_email_attachment
+namespace: solutions
+
+triggers:
+  - id: email
+    type: io.kestra.plugin.email.RealTimeTrigger
+    protocol: IMAP
+    host: imap.gmail.com
+    username: "{{secret('APP_ID')}}"
+    password: "{{secret('APP_PASSWORD')}}"
+    folder: INBOX
+    ssl: true
+    disabled: true
+
+tasks:
+  - id: hello
+    type: io.kestra.plugin.core.log.Log
+    message: Hello World! 🚀
+
+finally:
+  - id: clean
+    type: io.kestra.plugin.core.storage.PurgeCurrentExecutionFiles

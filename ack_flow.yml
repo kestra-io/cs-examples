@@ -1,0 +1,29 @@
+id: ack_flow
+namespace: solutions
+
+triggers:
+  - id: analytics_pipeline
+    type: io.kestra.plugin.core.trigger.Flow
+    preconditions:
+      id: "pipeline_success"
+      flows:
+         - namespace: solutions
+           flowId: analytics_example
+           states: [SUCCESS]
+           
+
+tasks:
+  - id: hello
+    type: io.kestra.plugin.core.log.Log
+    message: Flow was successful! "{{trigger ?? ''}}"
+  - id: oauth
+    type: io.kestra.plugin.gcp.auth.OauthAccessToken
+    serviceAccount: "{{secret('GCP_SERVICE_ACCOUNT')}}"
+  - id: pod
+    type: io.kestra.plugin.scripts.shell.Commands
+    commands:
+      - echo "Hello from a Kubernetes task runner!"
+    taskRunner:
+      type: io.kestra.plugin.ee.kubernetes.runner.Kubernetes
+      config:
+        oauthToken: "{{ outputs.oauth.accessToken['tokenValue'] }}"

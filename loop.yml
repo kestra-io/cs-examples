@@ -1,0 +1,15 @@
+id: loop
+namespace: solutions
+
+tasks:
+  - id: looptheloop
+    type: io.kestra.plugin.core.flow.LoopUntil
+    condition: "false"
+    checkFrequency:
+      interval: PT2S
+      maxIterations: 5
+    tasks:
+      - id: shell
+        type: io.kestra.plugin.scripts.shell.Commands
+        commands:
+          - echo 123
