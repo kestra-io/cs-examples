@@ -1,0 +1,12 @@
+id: qgWd3Ic5N84rIYzHiIj5
+title: test_blueprint
+description: The description of your blueprint.
+flow: |-
+  id: flow
+  namespace: << arg.namespace >>
+  tasks:
+  <% for value in arg.values %>
+    - id: log_<< value >>
+      type: io.kestra.plugin.core.log.Log
+      message: Hello << value >>
+  <% endfor %>

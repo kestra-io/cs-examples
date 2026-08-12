@@ -1,0 +1,18 @@
+id: giraffe_676313
+namespace: solutions.data
+
+tasks:
+  - id: write
+    type: io.kestra.plugin.scripts.shell.Commands
+    containerImage: alpine:latest
+    outputFiles:
+      - "test.txt"
+    commands:
+      - mkdir -p /app
+      - echo 123 > test.txt
+  - id: hello
+    type: io.kestra.plugin.scripts.shell.Commands
+    inputFiles:
+      "{{workingDir}}/app/test.txt": "{{outputs.write.outputFiles['test.txt']}}"
+    commands:
+      - cat app/test.txt

@@ -1,0 +1,122 @@
+id: stage_taxi_data
+namespace: solutions.data.staging
+
+inputs:
+  - id: taxi_data
+    type: FILE
+  - id: zones
+    type: FILE
+
+triggers:
+  - id: on_taxi_data_raw_completion
+    type: io.kestra.plugin.core.trigger.Flow
+    preconditions:
+      id: taxi_data_raw_flow
+      flows:
+        - namespace: solutions.data.raw
+          flowId: nyc_taxi_data
+          states: [SUCCESS]
+    inputs:
+      taxi_data: "{{ trigger.outputs.taxi_data }}"
+      zones: "{{ trigger.outputs.zones }}"
+
+tasks:
+  - id: create_raw_tables
+    type: io.kestra.plugin.jdbc.snowflake.Queries
+    transaction: false
+    database: demo
+    sql: |
+      CREATE SCHEMA IF NOT EXISTS RAW;
+      CREATE OR REPLACE TABLE RAW.YELLOW_TRIPDATA_RAW (
+        VendorID STRING, tpep_pickup_datetime STRING, tpep_dropoff_datetime STRING,
+        passenger_count STRING, trip_distance STRING, RatecodeID STRING,
+        store_and_fwd_flag STRING, PULocationID STRING, DOLocationID STRING,
+        payment_type STRING, fare_amount STRING, extra STRING, mta_tax STRING,
+        tip_amount STRING, tolls_amount STRING, improvement_surcharge STRING,
+        total_amount STRING, congestion_surcharge STRING, airport_fee STRING
+      );
+      CREATE OR REPLACE TABLE RAW.TAXI_ZONES_RAW (
+        LocationID STRING, Borough STRING, Zone STRING, service_zone STRING
+      );
+
+  - id: stage_trips
+    type: io.kestra.plugin.jdbc.snowflake.Upload
+    database: demo
+    from: "{{ inputs.taxi_data }}"
+    fileName: trips.parquet
+    prefix: raw
+    stageName: "@DEMO.RAW.%YELLOW_TRIPDATA_RAW"
+    compress: false
+    assets:
+      inputs:
+        - id: raw_taxi_trip_data
+          type: io.kestra.plugin.ee.assets.File    
+
+
+  - id: stage_zones
+    type: io.kestra.plugin.jdbc.snowflake.Upload
+    database: demo
+    from: "{{ inputs.zones }}"
+    fileName: zones.csv
+    prefix: raw
+    stageName: "@demo.RAW.%TAXI_ZONES_RAW"
+    compress: true
+    assets:
+      inputs:
+        - id: raw_taxi_zone_data
+          type: io.kestra.plugin.ee.assets.File    
+
+
+  - id: copy_into
+    type: io.kestra.plugin.jdbc.snowflake.Queries
+    warehouse: COMPUTE_WH
+    transaction: false
+    database: demo
+    sql: |
+      COPY INTO RAW.YELLOW_TRIPDATA_RAW
+        FROM @demo.RAW.%YELLOW_TRIPDATA_RAW
+        FILE_FORMAT = (TYPE = PARQUET)
+        MATCH_BY_COLUMN_NAME = CASE_INSENSITIVE
+        ON_ERROR = 'ABORT_STATEMENT';
+      COPY INTO RAW.TAXI_ZONES_RAW
+        FROM @demo.RAW.%TAXI_ZONES_RAW
+        FILE_FORMAT = (TYPE = CSV SKIP_HEADER = 1 FIELD_OPTIONALLY_ENCLOSED_BY = '"')
+        ON_ERROR = 'ABORT_STATEMENT';
+    assets:
+      inputs:
+        - id: raw_taxi_trip_data
+          type: io.kestra.plugin.ee.assets.File
+        - id: raw_taxi_zone_data
+          type: io.kestra.plugin.ee.assets.File
+
+
+  - id: dbt_build
+    type: io.kestra.plugin.dbt.cli.DbtCLI
+    version: 1.8.0
+    assets:
+      enableAuto: true
+    containerImage: ghcr.io/kestra-io/dbt-snowflake:latest
+    taskRunner:
+      type: io.kestra.plugin.scripts.runner.docker.Docker
+    namespaceFiles:
+      enabled: true
+      namespaces:
+        - solutions.data
+    projectDir: dbt
+    commands:
+      - dbt build --project-dir dbt --select staging
+    profiles: |
+      taxi_demo:
+        outputs:
+          prod:
+            type: snowflake
+            account: {{secret('SNOWFLAKE_ACCOUNT')}}
+            user: "{{ secret('SNOWFLAKE_USERNAME') }}"
+            private_key: "{{secret('SNOWFLAKE_KEY')}}"          
+            role: ACCOUNTADMIN
+            warehouse: COMPUTE_WH
+            database: demo
+            schema: raw
+            threads: 4
+            client_session_keep_alive: False
+        target: prod

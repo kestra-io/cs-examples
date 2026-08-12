@@ -1,0 +1,11 @@
+name: 'aircraft_analytics'
+version: '1.0.0'
+config-version: 2
+
+profile: 'aircraft_analytics'
+
+model-paths: ["models"]
+
+models:
+  aircraft_analytics:
+    +materialized: view

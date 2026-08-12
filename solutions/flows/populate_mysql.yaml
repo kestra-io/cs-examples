@@ -1,0 +1,38 @@
+id: populate_mysql
+namespace: solutions
+
+tasks:
+  - id: drop_table
+    type: io.kestra.plugin.jdbc.mysql.Query
+    sql: DROP TABLE quality_inspections
+  - id: add_table
+    allowFailure: true
+    type: io.kestra.plugin.jdbc.mysql.Query
+    sql: |
+      CREATE TABLE quality_inspections (
+          inspection_id   INT PRIMARY KEY AUTO_INCREMENT,
+          tail_number     VARCHAR(10),
+          model_name      VARCHAR(30),
+          component_category ENUM('engine','avionics','fuselage','landing_gear','hydraulics','electrical','interior'),
+          supplier_name   VARCHAR(80),
+          inspection_date DATE,
+          result          ENUM('pass','fail','rework'),
+          defect_code     VARCHAR(20),
+          labor_hours     DECIMAL(8,2),
+          created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );    
+
+  - id: add_data
+    type: io.kestra.plugin.scripts.python.Commands
+    dependencies:
+      - faker
+      - mysql-connector-python
+    namespaceFiles:
+      enabled: true
+    env:
+      MYSQL_HOST: "{{secret('MYSQL_HOST')}}"
+      MYSQL_USER: "{{secret('MYSQL_USER')}}"
+      MYSQL_PORT: "{{secret('MYSQL_PORT')}}"
+      MYSQL_PASS: "{{secret('MYSQL_PASSWORD')}}"
+    commands:
+      - python add_mysql_data.py

@@ -1,0 +1,45 @@
+id: mart_taxi_data
+namespace: solutions.data.mart
+
+triggers:
+  - id: on_taxi_data_staging_completion
+    type: io.kestra.plugin.core.trigger.Flow
+    preconditions:
+      id: taxi_data_stg_flow
+      flows:
+        - namespace: solutions.data.staging
+          flowId: stage_taxi_data
+          states: [SUCCESS]
+
+tasks:
+
+  - id: dbt_build
+    type: io.kestra.plugin.dbt.cli.DbtCLI
+    version: 1.8.0
+    assets:
+      enableAuto: true
+    containerImage: ghcr.io/kestra-io/dbt-snowflake:latest
+    taskRunner:
+      type: io.kestra.plugin.scripts.runner.docker.Docker
+    namespaceFiles:
+      enabled: true
+      namespaces:
+        - solutions.data
+    projectDir: dbt
+    commands:
+      - dbt build --project-dir dbt --select marts
+    profiles: |
+      taxi_demo:
+        outputs:
+          prod:
+            type: snowflake
+            account: {{secret('SNOWFLAKE_ACCOUNT')}}
+            user: "{{ secret('SNOWFLAKE_USERNAME') }}"
+            private_key: "{{secret('SNOWFLAKE_KEY')}}"          
+            role: ACCOUNTADMIN
+            warehouse: COMPUTE_WH
+            database: demo
+            schema: raw
+            threads: 4
+            client_session_keep_alive: False
+        target: prod

@@ -1,0 +1,42 @@
+id: solutions_finance_purchaseOrderFlow
+type: io.kestra.plugin.ee.apps.Execution
+namespace: solutions.finance
+description: This app allows managers to approve purchasing orders once the invoice has been forwarded.
+displayName: Approve purchasing order
+flowId: purchaseOrderFlow
+
+access:
+  type: PRIVATE
+  catalog: true
+
+layout:
+  - on: PAUSE
+    blocks:
+      - type: io.kestra.plugin.ee.apps.core.blocks.Markdown
+        content: |
+          # Purchase Order Form
+          Invoice for {{ fromJson(printContext().params.appParams | base64decode).productName }} requested by {{ fromJson(printContext().params.flowInputs | base64decode).requestor }} has been received for your approval.
+
+          Please approve the Purchasing Order
+
+          Product: {{ fromJson(printContext().params.appParams | base64decode).productName }}
+
+          Price: {{ fromJson(printContext().params.appParams | base64decode).productPrice }}
+
+          Department: {{ fromJson(printContext().params.flowInputs | base64decode).department }}
+
+          ![product]({{ fromJson(printContext().params.appParams | base64decode).productImageLink }})
+      - type: io.kestra.plugin.ee.apps.execution.blocks.ResumeExecutionForm
+      - type: io.kestra.plugin.ee.apps.execution.blocks.ResumeExecutionButton
+        text: Submit
+
+  - on: SUCCESS
+    blocks:
+      - type: io.kestra.plugin.ee.apps.core.blocks.Alert
+        content: Purchase Order Decision Submitted Successfully
+        style: SUCCESS
+        showIcon: true
+
+  - on: RUNNING
+    blocks:
+      - type: io.kestra.plugin.ee.apps.core.blocks.Loading

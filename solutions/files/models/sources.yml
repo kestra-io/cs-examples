@@ -1,0 +1,6 @@
+sources:
+  - name: raw
+    database: demo
+    schema: public
+    tables:
+      - name: aircraft_production_data

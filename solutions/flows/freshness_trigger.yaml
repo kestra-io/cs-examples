@@ -1,0 +1,18 @@
+id: freshness_trigger
+namespace: solutions
+
+triggers:
+  - id: asset2
+    type: io.kestra.plugin.kestra.ee.assets.FreshnessTrigger
+    maxStaleness: PT1M
+    assetId: dbt_transformed_data
+    namespace: solutions
+    interval: PT30S
+    tenantId: solutions
+    auth:
+      apiToken: "{{secret('KESTRA_API')}}"
+
+tasks:
+  - id: hello
+    type: io.kestra.plugin.core.log.Log
+    message: dbt_transformed_data is not fresh!

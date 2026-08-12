@@ -1,0 +1,32 @@
+id: send_msg_to_kafka
+namespace: solutions
+
+inputs:
+  - id: topic
+    type: STRING
+    defaults: "trigger-topic"
+  - id: payload
+    type: JSON
+    defaults: |
+      {
+        "time": "{{now()}}",
+        "execution_id": "{{render(execution.id)}}"
+      }
+
+tasks:
+  - id: produce
+    type: io.kestra.plugin.kafka.Produce
+    transactional: false
+    topic: "{{inputs.topic}}"
+    from:
+      key: "{{execution.id}}"
+      value: "{{inputs.payload}}"
+    keySerializer: STRING
+    valueSerializer: JSON
+    properties:
+      bootstrap.servers: "{{secret('KAFKA_SERVER')}}"
+      security.protocol: SASL_SSL
+      sasl.mechanism: SCRAM-SHA-256
+      ssl.truststore.type: PEM
+      ssl.truststore.certificates: "{{secret('KAFKA_CERT')}}"
+      sasl.jaas.config: "org.apache.kafka.common.security.scram.ScramLoginModule required username=\"{{secret('KAFKA_SASL_USERNAME')}}\" password=\"{{secret('KAFKA_SASL_PASSWORD')}}\";"

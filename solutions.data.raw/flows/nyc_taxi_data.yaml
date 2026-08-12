@@ -1,0 +1,38 @@
+id: nyc_taxi_data
+namespace: solutions.data.raw
+
+variables:
+  trips_dataset: "https://d37ci6vzurychx.cloudfront.net/trip-data/yellow_tripdata_2024-01.parquet" 
+  zones: "https://d37ci6vzurychx.cloudfront.net/misc/taxi_zone_lookup.csv"
+
+tasks:
+  - id: download_taxi_data
+    type: io.kestra.plugin.core.http.Download
+    uri: "{{vars.trips_dataset}}"
+    assets:
+      outputs:
+        - id: raw_taxi_trip_data
+          type: io.kestra.plugin.ee.assets.File
+          metadata: 
+            uri: "{{outputs.download_taxi_data.uri}}"
+            length: "{{outputs.download_taxi_data.length}}"
+  - id: download_zone_data
+    type: io.kestra.plugin.core.http.Download
+    uri: "{{vars.zones}}"
+    assets:
+      outputs:
+        - id: raw_taxi_zone_data
+          type: io.kestra.plugin.ee.assets.File
+          description: |
+            the file containing the taxi zone data from data.nyc.gov
+          metadata: 
+            uri: "{{outputs.download_zone_data.uri}}"
+            length: "{{outputs.download_zone_data.length}}"
+
+outputs:
+  - id: taxi_data
+    type: FILE
+    value: "{{outputs.download_taxi_data.uri}}"
+  - id: zones
+    type: FILE
+    value: "{{outputs.download_zone_data.uri}}"

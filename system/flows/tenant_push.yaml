@@ -1,0 +1,20 @@
+id: tenant_push
+namespace: system
+
+tasks:
+  - id: push
+    type: io.kestra.plugin.git.TenantSync
+    sourceOfTruth: KESTRA
+    whenMissingInSource: DELETE
+    version: 1.7.1
+    protectedNamespaces:
+      - system
+    url: https://github.com/paulgrainger85/kestra-demo
+    username: paulgrainger85
+    password: "{{secret('GITHUB_ACCESS_TOKEN')}}"
+    branch: main
+    gitDirectory: kestra
+    kestraUrl: "{{kestra.url}}"
+    auth:
+      apiToken: "{{secret('API_TOKEN')}}"
+      

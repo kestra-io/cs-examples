@@ -1,0 +1,20 @@
+id: asset_downstream_notification
+namespace: solutions
+
+triggers:
+  - id: asset_notification_trigger
+    type: io.kestra.plugin.ee.assets.EventTrigger
+    assetId: dbt_transformed_data
+    events:
+      - CREATED
+      - UPDATED
+
+tasks:
+  - id: notify_downstream_systems
+    type: io.kestra.plugin.kafka.Produce
+    topic: kestra-event
+    transactional: false
+    properties: []
+    from:
+      key: "{{trigger.asset.id}}"
+      value: "{{trigger.asset.metadata}}"

@@ -1,0 +1,9 @@
+name: demo_project
+version: '1.0'
+config-version: 2
+
+profile: kestraDemo
+
+model-paths: ["models"]
+target-path: "target"
+clean-targets: ["target", "dbt_modules"]
