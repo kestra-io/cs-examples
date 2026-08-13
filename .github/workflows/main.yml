@@ -16,7 +16,7 @@ jobs:
       - name: Validate all flows
         uses: kestra-io/github-actions/validate-flows@main
         with:
-          directory: ./
+          directory: ./solutions.data/flows
           server: https://partners.kestra.cloud
           apiToken: ${{ secrets.API_KEY }}
           tenant: solutions
