@@ -46,7 +46,7 @@ jobs:
         with:
           localPath: ./solutions.data/files
           namespace: solutions.data
-          namespacePath: ./solutions.data/files
+          namespacePath: ./
           server: https://partners.kestra.cloud
           apiToken: ${{ secrets.API_KEY }}
           tenant: solutions
