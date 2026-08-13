@@ -1,5 +1,7 @@
 id: nyc_taxi_data
 namespace: solutions.data.raw
+description: |
+  Flow to pull some sample NYC Taxi data files to trigger ETL pipeline in Kestra
 
 variables:
   trips_dataset: "https://d37ci6vzurychx.cloudfront.net/trip-data/yellow_tripdata_2024-01.parquet" 
