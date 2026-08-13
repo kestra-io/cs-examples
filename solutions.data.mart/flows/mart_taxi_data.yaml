@@ -1,5 +1,7 @@
 id: mart_taxi_data
 namespace: solutions.data.mart
+description: |
+  Flow to create aggregations on taxi data
 
 triggers:
   - id: on_taxi_data_staging_completion
@@ -12,7 +14,6 @@ triggers:
           states: [SUCCESS]
 
 tasks:
-
   - id: dbt_build
     type: io.kestra.plugin.dbt.cli.DbtCLI
     version: 1.8.0
