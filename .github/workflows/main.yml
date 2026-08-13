@@ -41,12 +41,12 @@ jobs:
     steps:
       - name: Checkout repository content
         uses: actions/checkout@v4
-      - name: Upload config YAML to engineering namespace
+      - name: Upload config YAML to solutions.data namespace
         uses: kestra-io/github-actions/deploy-namespace-files@main
         with:
           localPath: ./solutions.data/files
           namespace: solutions.data
-          namespacePath: .
+          namespacePath: ./solutions.data/files
           server: https://partners.kestra.cloud
           apiToken: ${{ secrets.API_KEY }}
           tenant: solutions
