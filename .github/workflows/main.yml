@@ -45,7 +45,7 @@ jobs:
       - name: Upload config YAML to solutions.data namespace
         uses: kestra-io/github-actions/deploy-namespace-files@main
         with:
-          localPath: ./solutions.data/files
+          localPath: ./solutions.data/files/dbt
           namespace: solutions.data
           namespacePath: ./pipelines
           server: https://partners.kestra.cloud
