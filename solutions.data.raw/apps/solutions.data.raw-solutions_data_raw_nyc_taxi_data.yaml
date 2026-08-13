@@ -1,0 +1,50 @@
+id: solutions_data_raw_nyc_taxi_data
+type: io.kestra.plugin.ee.apps.Execution
+displayName: Submit taxi file override data
+namespace: solutions.data.raw
+flowId: nyc_taxi_data
+access: 
+    type: PRIVATE
+
+layout:
+  - on: OPEN
+    blocks:
+      - type: io.kestra.plugin.ee.apps.core.blocks.Markdown
+        content: |
+          ![image](https://imgs.search.brave.com/B0WMX-BXUB9CvXv1pYKzllQXtDIoLEXogzrIQ16U3Vk/rs:fit:860:0:0:0/g:ce/aHR0cHM6Ly9saXZl/LnN0YXRpY2ZsaWNr/ci5jb20vMzIzMS8y/MzI3NjAyNDk3XzMz/NzhkNDdmZmMuanBn)
+          # NYC Taxi Data Override
+          Submit files(s) to override the current datasets in the pipeline
+      - type: io.kestra.plugin.ee.apps.execution.blocks.CreateExecutionForm
+      - type: io.kestra.plugin.ee.apps.execution.blocks.CreateExecutionButton
+        text: Submit
+  - on: PAUSE
+    blocks:
+      - type: io.kestra.plugin.ee.apps.core.blocks.Markdown
+        content: |
+          Waiting for approval
+      - type: io.kestra.plugin.ee.apps.core.blocks.AutoRefresh
+      - type: io.kestra.plugin.ee.apps.execution.blocks.ResumeExecutionButton      
+  - on: RESUME
+    blocks:
+      - type: io.kestra.plugin.ee.apps.core.blocks.Image
+        source: https://media.giphy.com/media/v1.Y2lkPTc5MGI3NjExcWRqbW4ybTg4OGsycjkyZnVxdXJoMjRpM2x3azQ0dG5zb3ExbTE4aSZlcD12MV9naWZzX3NlYXJjaCZjdD1n/xSM46ernAUN3y/giphy.gif
+      - type: io.kestra.plugin.ee.apps.core.blocks.AutoRefresh
+        
+  - on: RUNNING
+    blocks:
+      - type: io.kestra.plugin.ee.apps.core.blocks.Markdown
+        content: |
+          ## Uploading files to pipeline
+      - type: io.kestra.plugin.ee.apps.core.blocks.Loading
+      - type: io.kestra.plugin.ee.apps.execution.blocks.Logs
+      - type: io.kestra.plugin.ee.apps.execution.blocks.CancelExecutionButton
+        text: Cancel request
+  - on: SUCCESS
+    blocks:
+      - type: io.kestra.plugin.ee.apps.core.blocks.Markdown
+        content: |
+          ## Execution successfully completed
+      - type: io.kestra.plugin.ee.apps.execution.blocks.Logs
+      - type: io.kestra.plugin.ee.apps.core.blocks.Alert
+        style: SUCCESS
+        showIcon: true

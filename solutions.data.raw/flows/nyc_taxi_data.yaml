@@ -7,18 +7,42 @@ variables:
   trips_dataset: "https://d37ci6vzurychx.cloudfront.net/trip-data/yellow_tripdata_2024-01.parquet" 
   zones: "https://d37ci6vzurychx.cloudfront.net/misc/taxi_zone_lookup.csv"
 
+inputs:
+  - id: trips
+    type: FILE
+    required: false
+    description: |
+      A parquet file containing the daily trips and fares of taxis in NYC
+  - id: zones
+    type: FILE
+    required: false
+    description: |
+      A csv file containing reference data mapping zones across the 5 bouroughs of NYC
+
 tasks:
+  - id: check_approval
+    type: io.kestra.plugin.ee.flow.HumanTask
+    runIf: "{{(inputs.trips is not empty) or inputs.zones is not empty}}"
+    assignment:
+      groups:
+        - Admins
+    onResume:
+      - id: approval_message
+        type: STRING
+        defaults: "lgtm"
   - id: download_taxi_data
     type: io.kestra.plugin.core.http.Download
+    runIf: "{{inputs.trips is empty}}"
     uri: "{{vars.trips_dataset}}"
     assets:
       outputs:
         - id: raw_taxi_trip_data
           type: io.kestra.plugin.ee.assets.File
           metadata: 
-            uri: "{{outputs.download_taxi_data.uri}}"
-            length: "{{outputs.download_taxi_data.length}}"
+            uri: "{{outputs.download_taxi_data.uri ?? inputs.trips}}"
+            length: "{{outputs.download_taxi_data.length ?? ''}}"
   - id: download_zone_data
+    runIf: "{{inputs.zones is empty}}"
     type: io.kestra.plugin.core.http.Download
     uri: "{{vars.zones}}"
     assets:
@@ -28,13 +52,13 @@ tasks:
           description: |
             the file containing the taxi zone data from data.nyc.gov
           metadata: 
-            uri: "{{outputs.download_zone_data.uri}}"
-            length: "{{outputs.download_zone_data.length}}"
+            uri: "{{outputs.download_zone_data.uri ?? inputs.zone}}"
+            length: "{{outputs.download_zone_data.length ?? ''}}"
 
 outputs:
   - id: taxi_data
     type: FILE
-    value: "{{outputs.download_taxi_data.uri}}"
+    value: "{{outputs.download_taxi_data.uri ?? inputs.trips}}"
   - id: zones
     type: FILE
-    value: "{{outputs.download_zone_data.uri}}"
+    value: "{{outputs.download_zone_data.uri ?? inputs.zones}}"
