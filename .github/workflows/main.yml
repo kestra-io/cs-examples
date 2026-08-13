@@ -1,0 +1,21 @@
+name: Kestra Demo CI/CD
+on:
+  push:
+    branches: [ "demo" ]
+  pull_request:
+    branches: [ "demo" ]
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    name: Kestra validate
+    steps:
+      - name: Checkout repo content
+        uses: actions/checkout@v4
+
+      - name: Validate all flows
+        uses: kestra-io/github-actions/validate-flows@main
+        with:
+          directory: ./
+          server: https://partners.kestra.cloud
+          apiToken: ${{ secrets.API_KEY }}
