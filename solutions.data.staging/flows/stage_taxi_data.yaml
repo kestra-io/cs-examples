@@ -11,8 +11,6 @@ triggers:
   - id: on_taxi_data_raw_completion
     type: io.kestra.plugin.core.trigger.Flow
     dependsOn:
-      id: taxi_data_raw_flow
-      flows:
         - namespace: solutions.data.raw
           flowId: nyc_taxi_data
           states: [SUCCESS]

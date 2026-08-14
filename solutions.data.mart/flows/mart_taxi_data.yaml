@@ -7,8 +7,6 @@ triggers:
   - id: on_taxi_data_staging_completion
     type: io.kestra.plugin.core.trigger.Flow
     dependsOn:
-      id: taxi_data_stg_flow
-      flows:
         - namespace: solutions.data.staging
           flowId: stage_taxi_data
           states: [SUCCESS]
