@@ -1,12 +1,11 @@
 id: create_dataset_asset
 namespace: solutions.data
-
 tasks:
-  - id: asset_create
-    type: io.kestra.plugin.scripts.shell.Commands
-    commands:
-      - echo creating a dummy asset
-    assets:
-      outputs:
-        - id: dbt_transformed_data
-          type: io.kestra.plugin.ee.assets.Dataset
+    - assets:
+        outputs:
+            - id: dbt_transformed_data
+              type: io.kestra.plugin.ee.assets.Dataset
+      commands:
+        - echo creating a dummy asset
+      id: asset_create
+      type: io.kestra.plugin.scripts.shell.Commands

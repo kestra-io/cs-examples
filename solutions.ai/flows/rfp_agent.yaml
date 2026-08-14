@@ -1,0 +1,18 @@
+id: rfp_agent
+namespace: solutions.ai
+description: |
+  Takes an RFP CSV (first column = prospect requirement/question), answers each
+  question against the official Kestra documentation using an AI Agent, and
+  returns a CSV: original question | agent answer | related documentation links | accuracy probability.
+
+inputs:
+  - id: rfp
+    displayName: RFP CSV file
+    type: FILE
+
+tasks:
+  - id: answer_each
+    type: io.kestra.plugin.core.flow.ForEachItem
+    items: "{{inupts.rfp}}"
+    namespace: solutions.ai
+    flowId: agent_rfp_response

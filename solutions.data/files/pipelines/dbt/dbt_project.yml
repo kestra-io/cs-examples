@@ -1,0 +1,9 @@
+name: taxi_demo
+profile: taxi_demo
+version: "1.0"
+models:
+  taxi_demo:
+    staging:
+      +materialized: view
+    marts:
+      +materialized: table

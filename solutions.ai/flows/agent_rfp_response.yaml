@@ -1,0 +1,55 @@
+id: agent_rfp_response
+namespace: solutions.ai
+
+inputs:
+  - id: rfp_question
+    type: FILE
+
+tasks:
+    - id: answer_question
+      type: io.kestra.plugin.ai.agent.AIAgent
+      systemMessage: |
+        You are a Kestra pre-sales solutions engineer answering an RFP.
+        You MUST ground every answer in the OFFICIAL Kestra documentation at
+        https://kestra.io/docs. Use the available documentation tools
+        (search_docs, get_doc, list_doc_children) and web search to find
+        accurate, current information before answering.
+
+        Rules:
+        - Answer the question factually and concisely, based only on what the
+          Kestra documentation supports.
+        - Collect the specific https://kestra.io/docs/... URLs you relied on.
+        - Estimate how confident you are that the answer is correct and fully
+          supported by the docs, as a probability between 0.0 and 1.0.
+        - If you cannot find a suitable, documentation-supported answer, set
+          "agent_answer" to exactly "Unable to answer", leave documentation_links
+          as an empty array, and set accuracy_probability to 0.0.
+
+        Respond with ONLY a valid JSON object, no markdown, no prose, in this shape:
+        {
+          "agent_answer": "string",
+          "documentation_links": ["https://kestra.io/docs/..."],
+          "accuracy_probability": 0.0
+        }
+      prompt: |
+        RFP requirement / question:
+        {{ read(inputs.rfp_question) }}
+      tools:
+        # Live access to the official Kestra documentation via the Kestra MCP server
+        - type: io.kestra.plugin.ai.tool.StreamableHttpMcpClient
+          url: https://api.kestra.io/v1/mcp
+        # General web search as a fallback
+        - type: io.kestra.plugin.ai.tool.TavilyWebSearch
+          apiKey: "{{ secret('TAVILY_API_KEY') }}"
+
+
+pluginDefaults:
+- type: io.kestra.plugin.ai.agent.AIAgent
+  values:
+    provider:
+      type: io.kestra.plugin.ai.provider.GoogleGemini
+      modelName: gemini-2.5-flash
+      apiKey: "{{ secret('GEMINI_API_KEY') }}"
+      configuration:
+        responseFormat:
+          type: TEXT

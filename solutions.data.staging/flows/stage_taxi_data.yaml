@@ -67,34 +67,52 @@ tasks:
           type: io.kestra.plugin.ee.assets.File    
 
 
-  - id: copy_into
-    type: io.kestra.plugin.jdbc.snowflake.Queries
-    warehouse: COMPUTE_WH
-    transaction: false
-    database: demo
-    sql: |
-      COPY INTO RAW.YELLOW_TRIPDATA_RAW
-        FROM @demo.RAW.%YELLOW_TRIPDATA_RAW
-        FILE_FORMAT = (TYPE = PARQUET)
-        MATCH_BY_COLUMN_NAME = CASE_INSENSITIVE
-        ON_ERROR = 'ABORT_STATEMENT';
-      COPY INTO RAW.TAXI_ZONES_RAW
-        FROM @demo.RAW.%TAXI_ZONES_RAW
-        FILE_FORMAT = (TYPE = CSV SKIP_HEADER = 1 FIELD_OPTIONALLY_ENCLOSED_BY = '"')
-        ON_ERROR = 'ABORT_STATEMENT';
-    assets:
-      inputs:
-        - id: raw_taxi_trip_data
-          type: io.kestra.plugin.ee.assets.File
-        - id: raw_taxi_zone_data
-          type: io.kestra.plugin.ee.assets.File
-
-
+  - id: parallel_copy
+    type: io.kestra.plugin.core.flow.Parallel
+    tasks:
+      - id: copy_into_trips
+        type: io.kestra.plugin.jdbc.snowflake.Query
+        warehouse: COMPUTE_WH
+        database: demo
+        sql: |
+          COPY INTO RAW.YELLOW_TRIPDATA_RAW
+            FROM @demo.RAW.%YELLOW_TRIPDATA_RAW
+            FILE_FORMAT = (TYPE = PARQUET)
+            MATCH_BY_COLUMN_NAME = CASE_INSENSITIVE
+            ON_ERROR = 'ABORT_STATEMENT';
+        assets:
+          inputs:
+            - id: raw_taxi_trip_data
+              type: io.kestra.plugin.ee.assets.File
+          outputs:
+            - id: demo.raw.yellow_tripdata_raw
+              type: io.kestra.plugin.ee.assets.Table
+      - id: copy_into_zones
+        type: io.kestra.plugin.jdbc.snowflake.Query
+        warehouse: COMPUTE_WH
+        database: demo
+        sql: |
+          COPY INTO RAW.TAXI_ZONES_RAW
+            FROM @demo.RAW.%TAXI_ZONES_RAW
+            FILE_FORMAT = (TYPE = CSV SKIP_HEADER = 1 FIELD_OPTIONALLY_ENCLOSED_BY = '"')
+            ON_ERROR = 'ABORT_STATEMENT';
+        assets:
+          inputs:
+            - id: raw_taxi_zone_data
+              type: io.kestra.plugin.ee.assets.File
+          outputs:
+            - id: demo.raw.taxi_zones_raw
+              type: io.kestra.plugin.ee.assets.Table              
   - id: dbt_build
     type: io.kestra.plugin.dbt.cli.DbtCLI
     version: 1.8.0
     assets:
       enableAuto: true
+      inputs:
+        - id: demo.raw.yellow_tripdata_raw
+          type: io.kestra.plugin.ee.assets.Table
+        - id: demo.raw.taxi_zones_raw
+          type: io.kestra.plugin.ee.assets.Table      
     containerImage: ghcr.io/kestra-io/dbt-snowflake:latest
     taskRunner:
       type: io.kestra.plugin.scripts.runner.docker.Docker
@@ -102,9 +120,9 @@ tasks:
       enabled: true
       namespaces:
         - solutions.data
-    projectDir: dbt
+    projectDir: pipelines/dbt
     commands:
-      - dbt build --project-dir dbt --select staging
+      - dbt build --project-dir pipelines/dbt --select staging
     profiles: |
       taxi_demo:
         outputs:

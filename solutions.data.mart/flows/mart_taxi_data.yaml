@@ -26,9 +26,9 @@ tasks:
       enabled: true
       namespaces:
         - solutions.data
-    projectDir: dbt
+    projectDir: pipelines/dbt
     commands:
-      - dbt build --project-dir dbt --select marts
+      - dbt build --project-dir pipelines/dbt --select marts
     profiles: |
       taxi_demo:
         outputs:
