@@ -103,7 +103,6 @@ tasks:
               type: io.kestra.plugin.ee.assets.Table              
   - id: dbt_build
     type: io.kestra.plugin.dbt.cli.DbtCLI
-    version: 1.8.0
     assets:
       enableAuto: true
       inputs:
