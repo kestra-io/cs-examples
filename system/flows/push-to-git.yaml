@@ -1,16 +1,13 @@
 id: push-to-git
 namespace: system
-
-pluginDefaults:
-  - type: io.kestra.plugin.git
-    values:
-      url: https://github.com/kestra-io/cs-examples
+      
 
 tasks:
   - id: push_flows
     type: io.kestra.plugin.git.TenantSync
     sourceOfTruth: KESTRA
     whenMissingInSource: KEEP
+    url: https://github.com/kestra-io/cs-examples
     branch: demo
     username: paulgrainger85
     password: "{{secret('GITHUB_ACCESS_TOKEN')}}"
