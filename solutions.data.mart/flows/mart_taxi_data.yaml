@@ -6,7 +6,7 @@ description: |
 triggers:
   - id: on_taxi_data_staging_completion
     type: io.kestra.plugin.core.trigger.Flow
-    preconditions:
+    dependsOn:
       id: taxi_data_stg_flow
       flows:
         - namespace: solutions.data.staging
