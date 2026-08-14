@@ -6,7 +6,6 @@ tasks:
     type: io.kestra.plugin.git.TenantSync
     sourceOfTruth: KESTRA
     whenMissingInSource: DELETE
-    version: 1.7.1
     protectedNamespaces:
       - system
     url: https://github.com/paulgrainger85/kestra-demo
