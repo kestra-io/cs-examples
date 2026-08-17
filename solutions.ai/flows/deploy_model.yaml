@@ -1,0 +1,21 @@
+id: deploy_model
+namespace: solutions.ai
+
+inputs:
+  - id: modelName
+    type: STRING
+  - id: modelVersion
+    type: STRING
+  
+tasks:
+  - id: deploy_to_gpu
+    type: io.kestra.plugin.core.flow.ForEach
+    concurrencyLimit: 0
+    values:
+      - NVIDIA_A100
+      - AMD_MI250
+      - Google_TPU_v4
+    tasks:
+      - id: deploy_model_log
+        type: io.kestra.plugin.core.log.Log
+        message: "Deploying model {{ inputs.modelName }} version {{ inputs.modelVersion }} to GPU architecture {{ taskrun.value }}"
