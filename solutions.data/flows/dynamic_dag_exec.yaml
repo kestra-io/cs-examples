@@ -1,0 +1,27 @@
+id: dynamic_dag_exec
+namespace: solutions.data
+
+tasks:
+  # business logic
+  - id: hello_world
+    type: io.kestra.plugin.core.log.Log
+    message: Hello from Kestra! 🚀
+  # control logic
+  - id: await_decision
+    type: io.kestra.plugin.core.flow.Pause
+    onResume:
+      - id: next_nodes
+        type: SELECT
+        description: How many child nodes do you want to spawn?
+        autoSelectFirst: true
+        values:
+          - "0"
+          - "1"
+          - "2"
+          - "3"
+  - id: call_dynamic_dag_router
+    type: io.kestra.plugin.core.flow.Subflow
+    flowId: dynamic_dag_router
+    namespace: foo
+    inputs:
+      nodes: "{{ outputs.await_decision.onResume.next_nodes }}"
