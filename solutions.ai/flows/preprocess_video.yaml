@@ -1,0 +1,66 @@
+id: preprocess_video
+namespace: solutions.ai
+
+inputs:
+  - id: rawVideo
+    type: FILE
+    description: The raw video file to be processed.
+  - id: filename
+    type: STRING
+    required: false
+    description: (Optional) The file name of the processed video. If not set a random UUID will be used instead
+
+tasks:
+  - id: video_preprocessing
+    type: io.kestra.plugin.scripts.python.Script
+    description: Simulate video preprocessing.
+    containerImage: python:3.13-slim
+    inputFiles:
+      input_video.mp4: "{{ inputs.rawVideo }}"
+    outputFiles:
+      - processed_video.mp4
+    script: |
+      import os
+      print(f"Starting to process video: {os.path.abspath('input_video.mp4')}")
+      # Simulate some processing
+      with open("input_video.mp4", "rb") as f_in:
+          raw_content = f_in.read()
+      
+      processed_content = b"PROCESSED_" + raw_content
+      
+      with open("processed_video.mp4", "wb") as f_out:
+          f_out.write(processed_content)
+      print(f"Finished processing video. Output: {os.path.abspath('processed_video.mp4')}")
+  - id: stage_processed_video
+    type: io.kestra.plugin.aws.s3.Upload
+    region: eu-west-1
+    accessKeyId: "{{secret('AWS_ACCESS_KEY')}}"
+    secretKeyId: "{{secret('AWS_SECRET_KEY')}}"
+    from: "{{outputs.video_preprocessing.outputFiles['processed_video.mp4']}}"
+    bucket: "pg-kestra-demo-bucket"
+    key: "{{inputs.filename ?? ('processed_video'+uuid()+'.mp4')}}"
+  - id: notify_data_operations_team
+    type: io.kestra.plugin.ee.flow.HumanTask
+    assignment:
+      groups:
+        - DataOperations
+    onResume:
+      - id: annotations
+        type: FILE
+        description: The annotations in JSON format
+      - id: comment
+        type: STRING
+        required: false
+        description: (Optional) Any comments to add on approving this workflow
+
+
+outputs:
+  - id: processedVideo
+    type: FILE
+    value: "{{ outputs.video_preprocessing.outputFiles['processed_video.mp4'] }}"
+  - id: file
+    type: STRING
+    value: "{{outputs.stage_processed_video.key}}"
+  - id: annotations
+    type: FILE
+    value: "{{outputs.notify_data_operations_team.onResume['annotations']}}"

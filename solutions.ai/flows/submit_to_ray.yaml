@@ -1,0 +1,52 @@
+id: submit_to_ray
+namespace: solutions.ai
+description: Representative flow submitting jobs to Ray cluster
+
+concurrency:
+  limit: 2
+  behavior: QUEUE
+
+triggers:
+  - id: preprocess_complete
+    type: io.kestra.plugin.core.trigger.Flow
+    inputs: 
+      file: "{{trigger.outputs.processedVideo}}"
+      fileName: "{{trigger.outputs.file}}"
+      
+    dependsOn:
+      - namespace: solutions.ai
+        flowId: preprocess_video
+        states:
+          - SUCCESS
+
+inputs:
+  - id: file
+    type: FILE
+  - id: fileName
+    type: STRING
+
+tasks:
+  - id: submit_job
+    type: io.kestra.plugin.core.http.Request
+    uri: https://httpbin.org/post
+    method: POST
+    formData:
+      fileName: "{{inputs.fileName}}"
+  - id: check_status
+    type: io.kestra.plugin.core.flow.LoopUntil
+    condition: "{{ outputs.check.status == 'COMPLETED' }}"
+    checkFrequency:
+      interval: PT2S
+      maxIterations: 20
+    tasks:
+      - id: check
+        type: io.kestra.plugin.core.debug.Return
+        format: >-
+          {{ (now() | date('epoch')) - (outputs.submit.value | date('epoch')) > 8
+             ? 'COMPLETED' : 'RUNNING' }}
+      
+
+    
+
+
+

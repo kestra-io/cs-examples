@@ -1,0 +1,65 @@
+id: evaluate_model
+namespace: solutions.ai
+description: Representative flow evaluating model after processing
+
+concurrency:
+  limit: 2
+  behavior: QUEUE
+
+variables:
+  precision: 0.8
+
+triggers:
+  - id: preprocess_complete
+    type: io.kestra.plugin.core.trigger.Flow
+    inputs: 
+      modelName: "{{trigger.outputs.modelName}}"
+      modelVersion: "{{trigger.outputs.modelVersion}}"
+
+    dependsOn:
+      - namespace: solutions.ai
+        flowId: submit_to_ray
+        states:
+          - SUCCESS
+
+inputs:
+  - id: modelName
+    type: STRING
+  - id: modelVersion
+    type: STRING
+
+tasks:
+  - id: run_eval_checks
+    type: io.kestra.plugin.scripts.python.Commands
+    dependencies:
+      - pandas
+    outputFiles:
+      - modelReport.json
+    namespaceFiles:
+      enabled: true
+    commands:
+      - python eval.py --modelName "{{inputs.modelName}}" --modelVersion "{{inputs.modelVersion}}" 
+  - id: check_score
+    type: io.kestra.plugin.core.flow.If
+    condition: "{{ vars.precision < read(outputs.run_eval_checks['outputFiles']['modelReport.json']) | jq('.metrics.mean_precision')|first }}"
+    then:
+      - id: deploy
+        type: io.kestra.plugin.core.flow.Subflow
+        flowId: deploy_model
+        namespace: solutions.ai
+        inputs:
+          modelName: "{{inputs.modelName}}"
+          modelVersion: "{{inputs.modelVersion}}"
+    else:
+      - id: slack_notify
+        type: io.kestra.plugin.slack.notifications.SlackIncomingWebhook
+        url: https://slack.com
+        allowFailure: true
+        payload: |
+          {
+            "msg": "nicely formatting slack alert"
+          }
+      - id: log
+        type: io.kestra.plugin.core.log.Log
+        message: model "{{inputs.modelName + ':' + inputs.modelVersion}}" failed evaluation
+      
