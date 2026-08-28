@@ -1,0 +1,77 @@
+id: draft_publish_mode
+namespace: solutions.devops
+
+description: |
+  Iterative human-in-the-loop editing: save a draft, come back, amend, publish.
+
+  A Pause inside a LoopUntil re-presents its own form each round, pre-filled with
+  what was entered last time. The loop only exits when the reviewer selects
+  PUBLISH, so nothing downstream runs until the content is final, and every round
+  is individually audited through the Pause task's `resumed` output.
+
+  Three things this pattern depends on, all of which look removable and are not:
+  - `variables: {string: null, integer: null}` at flow level. Without the
+    declaration, `{{ vars.string ?? inputs.string }}` throws on the first
+    iteration instead of falling back, because `??` guards null but not an
+    undefined property.
+  - `SetVariables` after the Pause. Referencing the Pause's own output as its own
+    default (`outputs.pause.onResume.string`) resolves against the current
+    iteration, whose outputs are still empty while it is paused, so every round
+    silently resets to the original flow inputs. It does not error, which is what
+    makes it dangerous.
+  - A short `checkFrequency.interval`. It defaults to PT1M, and during that gap
+    the execution reads PAUSED with nothing resumable, which is indistinguishable
+    from a hang.
+
+  Note that SetVariables stores values as strings. Feeding one back into a typed
+  input coerces it correctly, but referencing `{{ vars.integer }}` directly in
+  arithmetic or unquoted JSON will not do what you expect.
+
+  The loop is deliberately unbounded here. Add `maxIterations` or `maxDuration`
+  to `checkFrequency` for anything with a real reviewer on the other end.
+
+labels:
+  - key: "maintainer"
+    value: "faizan"
+  - key: "feature"
+    value: "human-in-the-loop"
+
+inputs:
+  - id: string
+    type: STRING
+    defaults: one
+  - id: integer
+    type: INT
+    defaults: 1
+
+variables:
+  string: null
+  integer: null
+
+tasks:
+  - id: loopUntil
+    type: io.kestra.plugin.core.flow.LoopUntil
+    condition: "{{ outputs.pause.onResume.mode == 'PUBLISH' }}"
+    checkFrequency:
+      interval: PT2S
+    tasks:
+      - id: pause
+        type: io.kestra.plugin.core.flow.Pause
+        onResume:
+          - id: string
+            type: STRING
+            defaults: "{{ vars.string ?? inputs.string }}"
+          - id: integer
+            type: INT
+            defaults: "{{ vars.integer ?? inputs.integer }}"
+          - id: mode
+            type: SELECT
+            values: 
+              - DRAFT
+              - PUBLISH
+            defaults: DRAFT
+      - id: setVars
+        type: io.kestra.plugin.core.execution.SetVariables
+        variables: 
+          string: "{{ outputs.pause.onResume.string }}"
+          integer: "{{ outputs.pause.onResume.integer }}"
