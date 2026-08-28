@@ -1,0 +1,110 @@
+id: process_provisioned_component_test
+namespace: solutions.devops
+
+description: |
+  Event-driven consumer of an approved component manifest.
+
+  Fires automatically on SUCCESS of requestComponentProvisioning, clones the
+  provisioning repository and reads the manifest that was just committed, so it
+  genuinely processes content from git rather than reusing the upstream
+  execution's in-memory outputs. Replace the simulated per-type handling with
+  whatever your pipeline actually does (Terraform apply, Ansible, cloud APIs).
+
+  Design note: the flow checks the manifest exists before opening it, and prints
+  what the repository does contain when it does not. Without that guard a
+  mistyped component name surfaces as a raw Python traceback, which reads like a
+  broken pipeline rather than a bad input.
+
+  Requires KV pair PROVISIONING_REPO_URL in this namespace.
+
+labels:
+  - key: "maintainer"
+    value: "faizan"
+  - key: "feature"
+    value: "devops-provisioning"
+
+inputs:
+  - id: application
+    type: STRING
+    defaults: demo-app
+  - id: component_name
+    type: STRING
+    defaults: demo-component-01
+
+tasks:
+  - id: read_from_git
+    type: io.kestra.plugin.core.flow.WorkingDirectory
+    tasks:
+      - id: clone_repository
+        type: io.kestra.plugin.git.Clone
+        url: "{{ kv('PROVISIONING_REPO_URL') }}"
+        branch: main
+
+      - id: process_manifest
+        type: io.kestra.plugin.scripts.python.Script
+        containerImage: python:3.12-slim
+        dependencies:
+          - kestra
+        script: |
+          import glob
+          import json
+          import os
+          import sys
+
+          from kestra import Kestra
+
+          path = "components/{{ inputs.application }}/{{ inputs.component_name }}.json"
+
+          if not os.path.exists(path):
+              print(f"No manifest found in git at: {path}")
+              print(
+                  "This flow consumes components pushed by "
+                  "request_component_provisioning_idem_test. Run that flow first, "
+                  "or pick one of the components already in the repository."
+              )
+              available = sorted(glob.glob("components/*/*.json"))
+              if available:
+                  print("Components currently in the repository:")
+                  for entry in available:
+                      print(f"  - {entry}")
+              else:
+                  print("The repository contains no components yet.")
+              sys.exit(1)
+
+          with open(path) as f:
+              component = json.load(f)
+
+          print(f"Processing component from git: {path}")
+          component_type = component["componentType"]
+
+          if component_type in ("VirtualMachine", "Container"):
+              attrs = component["vmAttributes"]
+              print(
+                  f"Provisioning {component_type} '{component['name']}': "
+                  f"{attrs['instanceType']} / {attrs['osName']} in {attrs['location']}"
+              )
+          elif component_type == "Namespace":
+              attrs = component["namespaceAttributes"]
+              print(
+                  f"Provisioning Namespace '{component['name']}': "
+                  f"{attrs['cpus']} vCPU / {attrs['memoryGb']}GB, monitoring={attrs['monitoringLevel']}"
+              )
+          else:
+              print(
+                  f"Provisioning {component_type} '{component['name']}' "
+                  f"across environments: {component['environments']}"
+              )
+
+          Kestra.outputs({"processed": component})
+
+triggers:
+  - id: on_component_approved
+    type: io.kestra.plugin.core.trigger.Flow
+    conditions:
+      - type: io.kestra.plugin.core.condition.ExecutionFlow
+        namespace: solutions.devops
+        flowId: request_component_provisioning_idem_test
+    states: [SUCCESS]
+    inputs:
+      application: "{{ trigger.outputs.application }}"
+      component_name: "{{ trigger.outputs.component_name }}"
