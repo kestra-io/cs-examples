@@ -1,0 +1,46 @@
+id: create_parquet_file
+namespace: solutions.data
+
+triggers:
+  - id: aws
+    type: io.kestra.plugin.aws.s3.Trigger
+    action: MOVE
+    bucket: "{{namespace.bucket}}"
+    prefix: trigger_dir
+    region: "{{namespace.aws_region}}"
+    accessKeyId: "{{secret('AWS_ACCESS_KEY')}}"
+    secretKeyId: "{{secret('AWS_SECRET_KEY')}}"
+    moveTo:
+      key: abc
+      bucket: "{{namespace.bucket}}"
+
+tasks:
+  - id: get_csvs
+    type: io.kestra.plugin.core.flow.ForEach
+    values: "{{ trigger.objects | jq('.[].uri') }}"
+    tasks:
+      - id: csv
+        type: io.kestra.plugin.core.flow.Subflow
+        flowId: duckdb
+        namespace: solutions
+        inputs:
+          csvFile: "{{taskrun.value}}"
+  - id: merge
+    type: io.kestra.plugin.core.storage.Concat
+    files: "{{ outputs.csv | jq('.[].outputs.csv') }}"
+    extension: ".csv"
+  - id: convert_to_parquet
+    type: io.kestra.plugin.serdes.parquet.IonToParquet
+    from: "{{ outputs.merge.uri }}"
+    schema: |
+      {
+        "type": "record",
+        "name": "CsvData",
+        "namespace": "com.kestra",
+        "fields": [
+          {"name": "a", "type": "int"},
+          {"name": "b", "type": "int"},
+          {"name": "c", "type": "int"},
+          {"name": "total", "type": "int"}
+        ]
+      }
