@@ -22,7 +22,7 @@ tasks:
       - id: csv
         type: io.kestra.plugin.core.flow.Subflow
         flowId: duckdb
-        namespace: solutions
+        namespace: solutions.data
         inputs:
           csvFile: "{{taskrun.value}}"
   - id: merge
