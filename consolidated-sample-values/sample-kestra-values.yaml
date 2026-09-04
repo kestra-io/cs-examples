@@ -291,6 +291,8 @@ kestra:
       tenant-id: staging                          # tenant this default role applies to
     basic-auth:
       password-regexp: ""                 # regex enforcing password complexity
+    one-time-password:                    # (EE) passwordless login: Kestra emails a short-lived code
+      enabled: true                       # requires kestra.ee.mail-service below to be configured
     invitations:
       expire-after: P7D                   # ISO-8601 duration, default P7D
 
@@ -515,7 +517,7 @@ kestra:
         enabled: false                     # store execution I/O internally instead of externally
         force-globally: false              # enforce internal storage everywhere
 
-    mail-service:
+    mail-service:                          # also required by kestra.security.one-time-password
       host: host.smtp.io                   # SMTP server hostname
       port: 587                            # SMTP server port
       username: user                       # SMTP auth username
@@ -613,6 +615,11 @@ micronaut:
 
   security:                                # mTLS + session/token + SSO config
                                             # Docs: https://kestra.io/docs/configuration/security-and-secrets
+    basic-auth:
+      enabled: true                         # set false to remove the email/password form from the login
+                                            # page, leaving only one-time-password and/or oauth2 below.
+                                            # Complete first-run setup before turning this off; the setup
+                                            # wizard needs a password to create the first account.
     x509:
       enabled: true                         # enable client-certificate (mTLS) authentication
     token:                                  # user session duration (JWT access token + browser cookie)
