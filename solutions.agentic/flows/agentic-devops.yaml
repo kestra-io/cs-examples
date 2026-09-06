@@ -1,0 +1,181 @@
+id: agenticResponses
+namespace: solutions.agentic
+
+triggers:
+  - id: webhook
+    type: io.kestra.plugin.core.trigger.Webhook
+    key: "{{ secret(''ALERT_WEBHOOK_KEY) }}"
+
+tasks:
+  - id: getKubeConfig
+    type: io.kestra.plugin.ai.agent.AIAgent
+    tools:
+      - type: io.kestra.plugin.ai.tool.DockerMcpClient
+        image: host.docker.internal:5050/cloud-mcp-server:latest
+        registryUrl: http://host.docker.internal:5050
+        dockerConfig: |
+          {
+            "insecure-registries": ["host.docker.internal:5050"]
+          }
+        binds:
+          - "/home/username/projects/automation/chain.pem:/tmp/volume/mounted/secrets/path/chain.pem:ro"
+          - "/home/username/projects/automation/private.pem:/tmp/volume/mounted/secrets/path/private.pem:ro"
+        env:
+          DOCKER_TLS_VERIFY: "0"
+          MCP_REQD_CHAIN_PATH: "/tmp/volume/mounted/secrets/path/chain.pem" 
+          MCP_REQD_KEY_PATH: "/tmp/volume/mounted/secrets/path/private.pem"
+    systemMessage: |  
+      Call get_cluster_kubeConfig exactly once with the parameters provided.
+      Return ONLY the raw kubeConfig YAML - no explanation, no markdown fences.
+    prompt: |
+      Call: get_cluster_kubeConfig(
+        clusterName="{{ inputs.clusterName }}"
+        accountId="{{ inputs.accountId }}"
+        cloudProvider="{{ inputs.cloudProvider }}"
+      )
+      Return the kubeConfig YAML text only.
+
+  - id: writeKubeConfig
+    type: io.kestra.plugin.scripts.shell.Commands
+    taskRunner:
+      type: io.kestra.plugin.core.runner.Process
+    env:
+      KUBECONFIG_CONTENT: "{{ outputs.getKubeConfig.textOutput }}"
+    commands:
+      - mkdir -p /tmp/kestra-wd && printf '%s' "$KUBECONFIG_CONTENT" > /tmp/kestra-wd/kubeconfig
+
+  - id: k8sDiscovery
+    type: io.kestra.plugin.ai.agent.AIAgent
+    tools:
+      - type: io.kestra.plugin.ai.tool.DockerMcpClient
+        image: host.docker.internal:5050/kubernetes-mcp-server:latest
+        registryUrl: "http://host.docker.internal:5050"
+        dockerConfig: |
+          {
+            "insecure-registries": ["host.docker.internal:5050"]
+          }
+        binds:
+          - /tmp/kestra-wd/kubeconfig:/.kube/config:ro
+          - "/home/username/projects/automation/chain.pem:/tmp/volume/mounted/secrets/path/chain.pem:ro"
+          - "/home/username/projects/automation/private.pem:/tmp/volume/mounted/secrets/path/private.pem:ro"
+        env:
+          DOCKER_TLS_VERIFY: "0"
+          SERVER_MODE: "stdio"
+    systemMessage: |
+      You are a Kuberentes diagnostics expert, Gather service configuration and Health data - never modify anything.
+
+      EXECUTION STEPS (run in order):
+
+      Step 1 - Get deployment env vars:
+        getResource(
+          Kind="Deployment".
+          Name="{{ inputs.serviceName }}"
+          namespace="{{ inputs.namespace }}"
+          jq=".spec.template.spec.containers[] | {name:.name, env: (.env // [])}"
+        )
+        Find the container named "app" and extract from its env:
+        - USEFUL_ENV_NAME_1
+        - USEFUL_ENV_NAME_2
+      
+      Step 2 - Get Pod Status
+        listResource(
+          Kind="Pod",
+          namespace="{{ inputs.namespace }}"
+          limit=20,
+          jq=".items[] | select(.metadata.name | startswith(\"{{ inputs.serviceName }}\")) | {name: .metadata.name, phase: .status.phase, ready: (.status.containerStatuses // [{}])[0].ready, restarts: (.status.containerStatuses // [{}])[0].restartCount}"
+        )
+        IMPORTANT: Only include pods whose name starts with "{{ inputs.serviceName }}"
+    prompt: |
+      Gather Kubernetes Health for service "{{ inputs.serviceName }}" in namespace "{{ inputs.namespace }}"
+      Follow all steps in the system message and return the JSON object only.
+
+  - id: rootCauseSynthesis
+    type: io.kestra.plugin.ai.agent.AIAgent
+    systemMessage: |
+      You are a senior site reliability engineer. Synthesise findings from 1 diagnosti
+      phase into a concise root cause report. Base analysis ONLY on observed data -
+      never hallucinate or infer facts not present in the inputs.
+
+      Report format - 1 section, max 400 words total:
+
+      ## 1. Service Status
+      Pod Health: count, ready/not-ready, restart counts, notable warning events.
+
+      ## 2. Root Cause Assessment
+      Most likely cause based on corelated evidence. Confidence: High / Medium / Low.
+
+      ## 3. Immediate Actions
+      Up to 3 concrete next steps (kubectl commands or targeted log searches)
+      Advisory only - no config changes, restarts or deployments.
+    prompt: |
+      Synthesise diagnostic data for "{{inputs.serviceName}}" in "{{ inputs.namespace }}"
+
+      Alert Summary: {{ inputs.alertSummary }}
+      Investigation Window: {{ inputs.dateFrom }} -> {{ inputs.dateTo }}
+
+      k8s Discovery
+      {{ outputs.k8sDiscovery.textOutput }}
+
+      Write the Section report
+
+  - id: notifySlack
+    type: io.kestra.plugin.slack.SlackIncomingWebhook
+    url: "{{ secret('SLACK_WEBHOOK') }}"
+    messageText: |
+      *Cluster* {{ inputs.clusterName }} {{ inputs.cloudProvider }} | *Account*: {{ inputs.accountId }} | *Window*: {{ inputs.dateFrom }} -> {{ inputs.dateTo }}
+      ```{{ outputs.rootCauseSynthesis.textOutput }}```
+      
+pluginDefaults:
+  - type: io.kestra.plugin.ai.agent.AIAgent
+    values:
+      provider: 
+        type: io.kestra.plugin.ai.provider.OpenAI
+        baseUrl: "https://wrapper.gateway.example.com/api/openai/v1"
+        modelName: "gcp:gemini-2.5-flash" # note here that the model is gemini but the provider is openAI. reason being custom wrapper built using openAI spec also hosting gemini models.
+        apiKey: "dummy"
+        # for mTLS auth
+        clientPem: "{{ read('file:///tmp/volume/mounted/secrets/path/cert.pem') ~ read('file:///tmp/volume/mounted/secrets/path/private.pem') }}"
+        caPem: "{{ read('file:///tmp/volume/mounted/secrets/path/caPem.pem') }}" 
+
+inputs:
+  - id: accountId
+    displayName: Account/Project/Domain
+    type: STRING
+    defaults: app-prod
+  - id: cloudProvider
+    displayName: Cloud Provider
+    type: SELECT
+    values:
+      - gcp
+      - aws
+      - azure
+    defaults: aws
+  - id: clusterName
+    displayName: Cluster Name
+    type: STRING
+    defaults: aws-app-prod
+  - id: namespace
+    displayName: Namespace
+    type: STRING
+    defaults: "app-prod"
+  - id: serviceName
+    displayName: Service Name
+    type: STRING
+    defaults: app-prod
+  - id: dateFrom
+    type: DATETIME
+    defaults: "2026-09-01T00:00:00.000000Z"
+  - id: dateTo
+    type: DATETIME
+    defaults: "2026-09-01T00:00:00.000000Z"
+  - id: alertSummary
+    type: STRING
+    defaults: Triage the current state
+
+description: |
+  AI Powered alert response workflow for Managed Kubernetes Clusters.
+
+labels:
+  team: devops
+  type: alert
+  maintainer: fqazi@kestra.io
