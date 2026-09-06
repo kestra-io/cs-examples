@@ -1,0 +1,54 @@
+id: scanServiceNowTickets
+namespace: solutions.ops
+labels:
+  - key: feature
+    value: servicenow
+  - key: domain
+    value: infra
+  - key: maintainer
+    value: caxe
+  - key: kestra.version
+    value: 1.0.8
+
+tasks:
+  - id: lastCheckDate
+    type: io.kestra.plugin.core.kv.Get
+    key: serviceNowLastPollDate
+    errorOnMissing: false
+
+  - id: formatTimestamp
+    type: io.kestra.plugin.core.debug.Return
+    format: |
+      javascript:gs.dateGenerate('{{(outputs.lastCheckDate.value | split(" "))[0]}}','{{(outputs.lastCheckDate.value | split(' '))[1]}}')
+
+  - id: fetchOpenTickets
+    type: io.kestra.plugin.core.http.Request
+    method: GET
+    uri: "https://dev219537.service-now.com/api/now/table/incident?sysparm_limit=100&sysparm_display_value=true&sysparm_query=state%3D1%5Esys_created_on%3E{{ outputs.formatTimestamp.value | urlencode }}"
+    headers:
+      Accept: application/json
+      Authorization: Basic {{ secret(namespace='solutions.agentic',key='SERVICE_NOW_TOKEN') }}
+    taskCache:
+      enabled: true
+
+  - id: getTicketDetails
+    type: io.kestra.plugin.core.flow.ForEach
+    values: "{{ fromJson(outputs.fetchOpenTickets.body).result }}"
+    tasks:
+      - id: processTicket
+        type: io.kestra.plugin.core.flow.Subflow
+        namespace: solutions.ops
+        flowId: processServiceNowTicket
+        inputs:
+          ticketNumber: "{{ fromJson(taskrun.value).number }}"
+          shortDescription: "{{ fromJson(taskrun.value).short_description }}"
+          openedAt: "{{ fromJson(taskrun.value).opened_at }}"
+          sysID: "{{ fromJson(taskrun.value).sys_id }}"
+          category: "{{ fromJson(taskrun.value).category }}"
+
+  - id: updateLastCheckDate
+    type: io.kestra.plugin.core.kv.Set
+    key: serviceNowLastPollDate
+    value: |
+      {{ now() | date("yyyy-MM-dd HH:mm:ss", timeZone="UTC") }}
+    kvType: STRING

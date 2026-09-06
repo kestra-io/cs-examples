@@ -1,0 +1,602 @@
+##############################################################################
+# Kestra — Helm Chart Sample Values (kestra-io/kestra, charts/kestra)
+#
+# Source: https://github.com/kestra-io/kestra/tree/develop/charts/kestra
+# Docs:   https://kestra.io/docs/installation/kubernetes
+#
+# This is a REFERENCE, not a deploy-ready file -- every chart-level key is
+# shown with a comment, matching the real chart's default values.yaml
+# (charts/kestra/values.yaml on the `develop` branch, chart version 0.0.0
+# at time of writing).
+#
+# The `configurations.application` block below follows the EXACT SAME schema
+# as a standalone Kestra application.yaml -- the chart renders it verbatim
+# into a ConfigMap key `_default.yml` (see templates/configmap.yaml) that
+# Kestra loads at startup. For the full menu of every documented
+# kestra.*/datasources.*/micronaut.*/logger.*/endpoints.* key (storage/
+# secret/queue backend alternatives, security, AI Copilot, Enterprise
+# settings, etc.), see the companion reference file:
+#   sample-kestra-values.yaml (same directory)
+# What's shown here is a realistic representative subset, not a duplicate of
+# that entire file -- keep the two in sync by hand if you add a new key
+# there that you also want reflected here.
+##############################################################################
+
+# This is to override the chart name.
+nameOverride: ""                      # override the chart's release name
+fullnameOverride: ""                  # override the full generated resource-name prefix
+
+### -------------------------------
+### Image settings
+### -------------------------------
+
+image:
+  repository: kestra/kestra           # image repository to deploy
+  pullPolicy: IfNotPresent            # Always | IfNotPresent | Never
+  tag: ""                             # overrides the image tag (defaults to the chart's appVersion)
+imagePullSecrets: []                  # references to secrets for pulling from private registries
+# - name: regcred
+# Create `regcred` in the same namespace as this release (EE images live on
+# registry.kestra.io, authenticated with your license ID + fingerprint --
+# the same values as kestra.ee.license.id/.fingerprint elsewhere in this file):
+#   kubectl create secret docker-registry regcred \
+#     --docker-server=registry.kestra.io \
+#     --docker-username=$LICENSEID \
+#     --docker-password=$FINGERPRINT \
+#     --namespace=<release-namespace>
+
+### -------------------------------
+### Common settings
+### -------------------------------
+
+common:
+  kind: Deployment                    # Deployment | StatefulSet
+  replicas: 1                         # number of pod replicas to run
+  priorityClassName: ""               # priority class for scheduling pods
+  strategy: {}                        # Deployment update strategy (only used when common.kind: Deployment)
+  # strategy:
+  #   type: RollingUpdate
+  #   rollingUpdate:
+  #     maxUnavailable: 0
+  #     maxSurge: 1
+  updateStrategy: {}                  # StatefulSet update strategy (only used when common.kind: StatefulSet)
+  # updateStrategy:
+  #   type: RollingUpdate
+  revisionHistoryLimit: 10            # number of old ReplicaSets to retain for rollback
+  annotations: {}                     # annotations applied to all resources
+  # annotations:
+  #   team: platform-eng
+  podAnnotations: {}                  # annotations applied specifically to pods
+  # podAnnotations:
+  #   prometheus.io/scrape: "true"
+  #   prometheus.io/port: "8081"
+  labels: {}                          # labels applied to all resources
+  # labels:
+  #   team: platform-eng
+  podLabels: {}                       # labels applied specifically to pods
+  # podLabels:
+  #   app.kubernetes.io/part-of: kestra
+  autoscaler:                         # horizontal pod autoscaling
+    enabled: false
+    minReplicas: 1
+    maxReplicas: 3
+    extra: {}                         # extra HorizontalPodAutoscaler spec fields, merged in as-is
+    # extra:
+    #   behavior:
+    #     scaleDown:
+    #       stabilizationWindowSeconds: 300
+    metrics: []
+    #  - type: Resource
+    #    resource:
+    #      name: cpu
+    #      target:
+    #        type: Utilization
+    #        averageUtilization: 50
+    #  - type: Resource
+    #    resource:
+    #      name: memory
+    #      target:
+    #        type: AverageValue
+    #        averageValue: 100Mi
+  livenessProbe:                      # container health check -- targets the `management` port (see service.ports below)
+    httpGet:
+      path: /health/liveness
+      port: management
+    initialDelaySeconds: 0
+    periodSeconds: 5
+    timeoutSeconds: 3
+    successThreshold: 1
+    failureThreshold: 3
+  readinessProbe:                     # pod-availability check
+    httpGet:
+      path: /health/readiness
+      port: management
+    initialDelaySeconds: 0
+    periodSeconds: 5
+    timeoutSeconds: 3
+    successThreshold: 1
+    failureThreshold: 3
+  startupProbe:                       # verifies the app started correctly before other probes take over
+    httpGet:
+      path: /health
+      port: management
+    initialDelaySeconds: 1
+    periodSeconds: 1
+    timeoutSeconds: 1
+    successThreshold: 1
+    failureThreshold: 120
+  resources: {}                       # resource requests/limits for containers
+  # resources:
+  #   requests:
+  #     cpu: "1"
+  #     memory: 2Gi
+  #   limits:
+  #     memory: 4Gi
+  terminationGracePeriodSeconds: 360  # grace period for pod termination
+  nodeSelector: {}                    # node selector constraints for scheduling
+  # nodeSelector:
+  #   kubernetes.io/os: linux
+  tolerations: []                     # tolerations for scheduling on tainted nodes
+  # tolerations:
+  #   - key: "dedicated"
+  #     operator: "Equal"
+  #     value: "kestra"
+  #     effect: "NoSchedule"
+  affinity: {}                        # affinity rules for pod scheduling
+  # affinity:
+  #   podAntiAffinity:
+  #     preferredDuringSchedulingIgnoredDuringExecution:
+  #       - weight: 100
+  #         podAffinityTerm:
+  #           labelSelector:
+  #             matchLabels:
+  #               app.kubernetes.io/name: kestra
+  #           topologyKey: kubernetes.io/hostname
+  topologySpreadConstraints: []       # topology spread constraints for pod scheduling
+  # topologySpreadConstraints:
+  #   - maxSkew: 1
+  #     topologyKey: topology.kubernetes.io/zone
+  #     whenUnsatisfiable: ScheduleAnyway
+  #     labelSelector:
+  #       matchLabels:
+  #         app.kubernetes.io/name: kestra
+  securityContext: {}                 # security context for containers
+  # securityContext:
+  #   runAsNonRoot: true
+  #   runAsUser: 1000
+  #   allowPrivilegeEscalation: false
+  podSecurityContext: {}              # security context for pods
+  # podSecurityContext:
+  #   fsGroup: 1000
+  initContainers: []                  # additional init containers run before the main container
+  # initContainers:
+  #   - name: wait-for-postgres
+  #     image: busybox:1.36
+  #     command: ["sh", "-c", "until nc -z postgres 5432; do sleep 1; done"]
+  extraVolumeMounts: []               # extra volume mounts added to containers
+  # extraVolumeMounts:
+  #   - name: custom-plugins
+  #     mountPath: /app/plugins
+  extraVolumes: []                    # extra volumes added to pods
+  # extraVolumes:
+  #   - name: custom-plugins
+  #     configMap:
+  #       name: kestra-custom-plugins
+  extraEnv: []                        # extra environment variables for containers
+  # extraEnv:
+  #   - name: JAVA_OPTS
+  #     value: "-Duser.timezone=UTC"
+  extraEnvFrom: []                    # import env vars from existing ConfigMaps/Secrets
+  # extraEnvFrom:
+  #   - secretRef:
+  #       name: kestra-extra-env
+  # This is also the recommended way to inject the credentials this file
+  # leaves as <placeholder> further down (datasources.postgres.password,
+  # kestra.encryption.secret-key, kestra.secret.jdbc.secret,
+  # kestra.server.basic-auth.password): create the Secret out-of-band with
+  # those keys, e.g.:
+  #   kubectl create secret generic kestra-credentials \
+  #     --from-literal=POSTGRES_PASSWORD=... \
+  #     --from-literal=ENCRYPTION_SECRET_KEY=... \
+  #     --from-literal=JDBC_SECRET=... \
+  #     --from-literal=BASIC_AUTH_PASSWORD=...
+  # extraEnvFrom:
+  #   - secretRef:
+  #       name: kestra-credentials
+  # ...then reference the env vars Micronaut-style (${VAR_NAME}) instead of
+  # the <placeholder> values in `configurations.application` below -- e.g.
+  # `password: "${POSTGRES_PASSWORD}"`. This is simpler than the
+  # configurations.secrets file-mount approach when you only have a handful
+  # of scalar credentials to inject, rather than a whole extra config file.
+  extraContainers: []                 # additional sidecar containers
+  # extraContainers:
+  #   - name: log-shipper
+  #     image: fluent/fluent-bit:latest
+  configmapReloader:
+    enabled: false                    # restart pods automatically when configurations.application changes
+  jvm:
+    forceActiveProcessors:            # workaround for cgroup/CPU-limit misdetection
+      enabled: false
+      count: 'auto'                   # 'auto' or 'value'
+      value: 2                        # used only when count: 'value'
+    extraOpts: ""                     # extra JVM flags, e.g. "-Xmx2g"
+
+### -------------------------------
+### Kestra settings
+### -------------------------------
+
+configurations:
+  # Application configuration merged into Kestra's config -- same schema as a
+  # standalone application.yaml. The subset below mirrors a typical Postgres +
+  # local-storage deployment; swap the storage/secret blocks for the backend
+  # you actually use. Do NOT put real credentials inline here -- use
+  # configurations.secrets below instead; the plaintext values shown are
+  # placeholders only.
+  #
+  # For a comprehensive reference of every documented kestra.*/datasources.*/
+  # micronaut.*/logger.*/endpoints.* key (every storage/secret/queue backend
+  # alternative, security/SSO, AI Copilot, Enterprise settings, etc.), see the
+  # companion file in this same directory: sample-kestra-values.yaml. What's
+  # shown here is a realistic representative subset, not a duplicate of that
+  # entire file -- keep the two in sync by hand if you add a new key there
+  # that you also want reflected here.
+  application:
+    datasources:
+      postgres:
+        url: jdbc:postgresql://<postgres-host>:5432/kestra   # JDBC URL to the Postgres backend
+        driver-class-name: org.postgresql.Driver
+        username: kestra
+        password: "<postgres-password>"        # move to configurations.secrets in production
+
+    kestra:
+      repository:
+        type: postgres                # postgres | mysql | h2 | elasticsearch (EE)
+      queue:
+        type: postgres                # postgres | mysql | h2 | kafka (EE)
+      storage:
+        type: local                   # local | s3 | gcs | azure | minio | seaweedfs | cloudflare
+        local:
+          base-path: /app/storage     # matches the image's default working-storage path
+      encryption:
+        secret-key: "<32-byte-base64-key>"   # generate: openssl rand -base64 32; move to configurations.secrets
+      secret:
+        type: jdbc                    # jdbc (default) | aws-secret-manager | google-secret-manager | azure-key-vault | vault | elasticsearch
+        jdbc:
+          secret: "<32-character-minimum-key>"   # move to configurations.secrets in production
+      server:
+        basic-auth:
+          username: admin@kestra.io   # must be a valid email address
+          password: "<change-me>"     # move to configurations.secrets in production
+      url: "https://kestra.example.com"   # public base URL, no /ui or /api suffix
+      plugins:
+        defaults:                     # default property values applied to matching task types
+          - type: io.kestra.plugin.scripts.runner.docker.Docker
+            values:
+              volume-enabled: true    # allow Docker task-runner volume mounting on this cluster
+      # worker.controllers is a Kestra 2.0+ concept, paired with the commented
+      # deployments.controller block above -- not needed on 1.x, where
+      # deployments.worker coordinates through the queue backend instead.
+      # Uncomment both together when moving to 2.0.
+      # worker:
+      #   controllers:
+      #     type: STATIC
+      #     static:
+      #       endpoints:
+      #         - host: <release-name>-controller   # Kubernetes Service name created by the chart, e.g. my-kestra-controller
+      #           port: 50051
+
+    micronaut:
+      security:
+        token:                       # user session duration (JWT access token + browser cookie)
+          generator:
+            access-token:
+              expiration: 36000       # seconds; keep in sync with cookie.cookie-max-age below
+          cookie:
+            cookie-max-age: 10h
+      views:
+        csp:                          # Content-Security-Policy for the UI
+          enabled: true
+          report-only: false          # true = log violations without blocking
+          filter-path: "/**"
+          policy-directives: "default-src 'self'; img-src https: data:; script-src 'self'"
+
+    logger:
+      levels:
+        io.kestra.core.runners: INFO  # per-package log level override
+
+  # -- Extra configmaps mounted as configuration files.
+  configmaps: []
+  # configmaps:
+  #   - name: kestra-others
+  #     key: others.yml
+
+  # -- Extra secrets mounted as configuration files -- put real credentials
+  # here (datasources.postgres.password, kestra.encryption.secret-key,
+  # kestra.secret.jdbc.secret, kestra.server.basic-auth.password, etc.)
+  # instead of inlining them in `application` above. The referenced Secret
+  # must already exist in the cluster with the given key.
+  secrets: []
+  # secrets:
+  #   - name: kestra-credentials
+  #     key: credentials.yml
+
+### -------------------------------
+### kestra service account
+### -------------------------------
+
+serviceAccount:
+  create: true                        # whether to create a ServiceAccount
+  automount: true                     # automatically mount API credentials to pods
+  annotations: {}                     # annotations to add to the ServiceAccount
+  # annotations:
+  #   eks.amazonaws.com/role-arn: "arn:aws:iam::123456789012:role/kestra-irsa"
+  name: ""                            # name of an existing ServiceAccount to use instead
+
+### -------------------------------
+### kestra deployments
+### -------------------------------
+
+## Dedicated components (distributed mode) instead of standalone.
+## Sizing below follows the "up to 1,000 task runs/minute" baseline tier from
+## https://kestra.io/docs/performance/sizing-and-scaling-infrastructure -- set
+## requests == limits so each JVM sees a stable, container-aware memory ceiling
+## (MaxRAMPercentage auto-sizing) instead of bursting into a CPU-throttled or
+## OOM-killed limit. Scale PAST this tier per that page's guidance:
+##   executor:  +2 CPU / +2 GB per additional 1,000 task runs/min
+##   scheduler: +1 CPU / +1 GB per additional 1,000 triggers
+##   worker:    "heavily workload-dependent" -- use the page's Worker Calculator
+##              to size for your actual task/plugin mix; the number below is
+##              only a starting point, not derived from the calculator.
+##
+## replicas: 2+ per component so a node drain/rollout doesn't take the whole
+## component offline (the sizing guide recommends at least one extra node per
+## component for maintenance/HA) -- this is on top of, not instead of, the
+## per-pod sizing above.
+##
+## jvm.extraOpts: MaxRAMPercentage-only (no hardcoded -Xmx) so the heap always
+## tracks resources.limits.memory automatically -- if you resize the limit
+## later you don't also have to remember to update a hardcoded -Xmx to match.
+deployments:
+  standalone:
+    enabled: false                    # disabled -- replaced by dedicated components below
+    workerThreads: 0                  # worker thread count; 0 = auto-configure based on CPU
+    extraArgs: []                     # extra CLI arguments passed to the container
+    dind:
+      enabled: true                   # run the Docker-in-Docker sidecar alongside standalone
+  webserver:
+    enabled: true                     # serves the UI + API
+    replicas: 2                       # HA: survive a node drain/rollout without downtime
+    extraArgs: []
+    resources:                        # sizing guide baseline: 1 CPU | 2 GB (add CPU for heavy API/upload traffic)
+      requests:
+        cpu: "1"
+        memory: 2Gi
+      limits:
+        cpu: "1"
+        memory: 2Gi
+    jvm:
+      extraOpts: "-XX:MaxRAMPercentage=75.0 -XX:+UseG1GC"
+  executor:
+    enabled: true                     # evaluates flows and dispatches tasks to workers
+    replicas: 2                       # HA: survive a node drain/rollout without downtime
+    extraArgs: []
+    resources:                        # sizing guide baseline: 2 CPU | 2 GB
+      requests:
+        cpu: "2"
+        memory: 2Gi
+      limits:
+        cpu: "2"
+        memory: 2Gi
+    jvm:
+      extraOpts: "-XX:MaxRAMPercentage=75.0 -XX:+UseG1GC"
+  indexer:
+    enabled: false                    # EE only -- reads Kafka execution topics and writes them to Elasticsearch for
+                                       # low-latency UI queries; requires BOTH queue.type: kafka and repository.type:
+                                       # elasticsearch to do anything (see kestra.queue/repository below). Since
+                                       # Kestra 0.20 the webserver runs an embedded indexer automatically on the
+                                       # Kafka backend, so a dedicated one is only needed at very high throughput.
+                                       # Leave disabled here: this reference uses postgres for both, where a
+                                       # separate indexer has nothing to read from.
+    extraArgs: []
+  scheduler:
+    enabled: true                     # evaluates triggers/schedules and creates executions
+    replicas: 2                       # HA: survive a node drain/rollout without downtime
+    extraArgs: []
+    resources:                        # sizing guide baseline: 1 CPU | 2 GB
+      requests:
+        cpu: "1"
+        memory: 2Gi
+      limits:
+        cpu: "1"
+        memory: 2Gi
+    jvm:
+      extraOpts: "-XX:MaxRAMPercentage=75.0 -XX:+UseG1GC"
+  worker:
+    enabled: true                     # runs tasks
+    replicas: 2                       # HA: survive a node drain/rollout without downtime
+    workerThreads: 0                  # worker thread count; 0 = auto-configure based on CPU (see resources.limits.cpu below)
+    extraArgs: []
+    resources:                        # sizing guide baseline: 2 CPU | 4 GB -- workload-dependent, tune with the Worker Calculator
+      requests:
+        cpu: "2"
+        memory: 4Gi
+      limits:
+        cpu: "2"
+        memory: 4Gi
+    jvm:
+      extraOpts: "-XX:MaxRAMPercentage=75.0 -XX:+UseG1GC"
+  # controller is a Kestra 2.0+ concept (gRPC worker-controller). Commented
+  # out for now since this reference targets Kestra 1.x, where distributed
+  # workers coordinate through the queue backend (postgres/kafka) instead --
+  # no controller needed. On 1.x, deployments.worker above connects directly
+  # without any of this. Uncomment when moving to 2.0, and also uncomment the
+  # matching `kestra.worker.controllers` block under configurations.application
+  # below.
+  # controller:
+  #   # Workers connect to the controller Service at <release>-controller:50051.
+  #   # Not covered by the sizing guide (a lightweight gRPC coordinator, not a
+  #   # task/flow execution component) -- the resources below are a judgment
+  #   # call, not sourced from the guide.
+  #   enabled: true
+  #   extraArgs: []
+  #   resources:
+  #     requests:
+  #       cpu: "250m"
+  #       memory: 256Mi
+  #     limits:
+  #       cpu: "250m"
+  #       memory: 256Mi
+
+# EE only -- define additional worker groups with custom settings, following
+# the same shape as deployments.worker (enabled/workerThreads/extraArgs/
+# resources/serviceAccountName/etc). Route specific flows/tasks to a group via
+# its `workerGroup` task-runner property. Sample below: a dedicated pool sized
+# above the default worker for heavier flows -- not from the sizing guide
+# (workerGroups aren't covered there), just a starting point to tune against
+# your actual workload, same as deployments.worker.resources above.
+workerGroups:
+  heavy-tasks:
+    enabled: true
+    workerThreads: 0                  # 0 = auto-configure based on CPU (see resources.limits.cpu below)
+    serviceAccountName: "kestra-worker-heavy-tasks"   # optional: dedicated ServiceAccount for this pool
+    extraArgs: []
+    resources:
+      requests:
+        cpu: "4"
+        memory: 8Gi
+      limits:
+        cpu: "4"
+        memory: 8Gi
+    jvm:
+      extraOpts: "-XX:MaxRAMPercentage=75.0 -XX:+UseG1GC"   # ~6Gi heap, tracks resources.limits.memory above
+# You can define more than one group:
+# workerGroups:
+#   heavy-tasks: { ... as above ... }
+#   gpu-tasks:
+#     enabled: true
+#     workerThreads: 8
+#     extraArgs: []
+
+### -------------------------------
+### kestra service
+### -------------------------------
+
+service:
+  type: ClusterIP                     # ClusterIP | NodePort | LoadBalancer
+  labels: {}                          # labels applied to the Service
+  # labels:
+  #   team: platform-eng
+  annotations: {}                     # annotations applied to the Service
+  # annotations:
+  #   service.beta.kubernetes.io/aws-load-balancer-type: nlb
+  ports:
+    http:                             # main webserver/API port -- must match micronaut.server.port if overridden above
+      port: 8080
+      containerPort: 8080
+      targetPort: http
+      protocol: TCP
+    management:                       # health/metrics port -- must match endpoints.all.port if overridden above
+      port: 8081
+      containerPort: 8081
+      targetPort: management
+      protocol: TCP
+    grpc:                             # gRPC worker-controller port (Kestra 2.0+)
+      port: 50051
+      containerPort: 50051
+      targetPort: 50051
+      protocol: TCP
+
+### -------------------------------
+### kestra dind
+### -------------------------------
+
+dind:
+  enabled: true                       # enable the Docker-in-Docker sidecar (needed by Docker task-runner tasks)
+  mode: 'rootless'                    # 'rootless' (recommended) or 'insecure' (fully privileged)
+  base:
+    rootless:
+      image:
+        repository: docker
+        pullPolicy: IfNotPresent
+        tag: dind-rootless
+      securityContext:
+        privileged: true
+        runAsUser: 1000
+        runAsGroup: 1000
+      args:
+        - --log-level=fatal
+        - --group=1000
+    insecure:                         # fallback if rootless dind doesn't work on your cluster
+      image:
+        repository: docker
+        pullPolicy: IfNotPresent
+        tag: dind-rootless
+      securityContext:
+        privileged: true
+        runAsUser: 0
+        runAsGroup: 0
+        allowPrivilegeEscalation: true
+        capabilities:
+          add:
+            - SYS_ADMIN
+            - NET_ADMIN
+            - DAC_OVERRIDE
+            - SETUID
+            - SETGID
+      args:
+        - '--log-level=fatal'
+  socketPath: /dind/                  # path where the dind socket is mounted
+  tmpPath: /tmp/                      # path for temporary storage in dind
+  resources: {}                       # resource requests/limits for the dind sidecar
+  # resources:
+  #   requests:
+  #     cpu: "500m"
+  #     memory: 512Mi
+  #   limits:
+  #     memory: 1Gi
+  extraEnv: []                        # extra environment variables for the dind container
+  # extraEnv:
+  #   - name: DOCKER_TLS_CERTDIR
+  #     value: ""
+
+### -------------------------------
+### Ingress
+### -------------------------------
+
+# This block is for setting up the ingress
+ingress:
+  enabled: false                      # create an Ingress resource
+  className: ""                       # IngressClass name to use
+  annotations: {}                     # annotations to add to the Ingress
+  # annotations:
+  #   cert-manager.io/cluster-issuer: letsencrypt-prod
+  #   nginx.ingress.kubernetes.io/proxy-body-size: 100m
+  hosts: []                           # hosts and paths for Ingress routing
+  # hosts:
+  #   - host: kestra.example.com
+  #     paths:
+  #       - path: /
+  #         pathType: Prefix
+  tls: []                             # TLS configuration for Ingress
+  # tls:
+  #   - secretName: kestra-tls
+  #     hosts:
+  #       - kestra.example.com
+
+### -------------------------------
+### Extra Kubernetes Manifests
+### -------------------------------
+
+# Extra raw Kubernetes manifests to deploy alongside the chart's own
+# resources, e.g. a PodDisruptionBudget or NetworkPolicy.
+extraManifests: []
+# extraManifests:
+#   - apiVersion: policy/v1
+#     kind: PodDisruptionBudget
+#     metadata:
+#       name: kestra-pdb
+#     spec:
+#       minAvailable: 1
+#       selector:
+#         matchLabels:
+#           app.kubernetes.io/name: kestra

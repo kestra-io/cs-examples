@@ -1,0 +1,49 @@
+id: investigateFailure
+namespace: solutions.resilience
+
+description: |
+  RCA flow. Automatically triggered the moment dynamicRecovery is CANCELLED
+  by its own MAX_DURATION SLA (guaranteedFailureSLA's shell task sleeps
+  longer than the SLA window). Produces a root-cause report that points
+  straight at the buggy line, so the presenter can fix it in
+  dynamicRecovery.yaml and manually replay the failed task.
+
+labels:
+  - key: "maintainer"
+    value: "faizan"
+  - key: "feature"
+    value: "resilience"
+
+triggers:
+  - id: on_dynamic_recovery_sla_breach
+    type: io.kestra.plugin.core.trigger.Flow
+    preconditions:
+      id: sla_breach
+      flows:
+        - namespace: solutions.resilience
+          flowId: dynamicRecovery
+          states: [CANCELLED]
+          labels:
+            sla: breach
+
+tasks:
+  - id: log_rca
+    type: io.kestra.plugin.core.log.Log
+    message: |
+      🧠 RCA REPORT — SLA breach on {{ trigger.namespace }}.{{ trigger.flowId }}
+      ───────────────────────────────
+      Triggering execution : {{ trigger.executionId }}
+      Terminal state        : {{ trigger.state }}
+
+      Root cause : Task 'guaranteedFailureSLA' runs `sleep 60` unconditionally,
+                   which alone exceeds dynamicRecovery's 30-second MAX_DURATION
+                   SLA, so Kestra cancels the execution before the task can
+                   even finish sleeping.
+
+      Next steps :
+        1. Open dynamicRecovery.yaml -> task 'guaranteedFailureSLA'.
+        2. Change `sleep 60` to `sleep 5` — comfortably under the 30s SLA.
+        3. Save the flow.
+        4. On the cancelled execution, click Replay on the
+           guaranteedFailureSLA task — Kestra reuses tasks 1-3's outputs
+           and only reruns from the fixed task forward.

@@ -1,0 +1,49 @@
+id: slack_alert
+namespace: solutions.notifications
+
+inputs:
+  - id: text
+    type: STRING
+
+variables:
+  slack_text: |
+    {
+      "blocks": [
+      {
+        "type": "header",
+        "text": {
+          "type": "plain_text",
+          "text": "ETL Pipeline Failed",
+          "emoji": true
+        }
+      },
+      {
+        "type": "image",
+        "title": {
+          "type": "plain_text",
+          "text": "ETL Pipeline Failed ",
+          "emoji": true
+        },
+        "image_url": "https://imgs.search.brave.com/AiZAa55oX16iC-i73plX8SfCnUJ_n0EsDfdCGiqr0kY/rs:fit:860:0:0:0/g:ce/aHR0cHM6Ly9tZWRp/YS5nZXR0eWltYWdl/cy5jb20vaWQvMTU3/NDM2NjIwL3Bob3Rv/L2Jyb2tlbi1sZWFr/aW5nLWNvcHBlci13/YXRlci1waXBlLmpw/Zz9zPTYxMng2MTIm/dz0wJms9MjAmYz04/ZFh2SEM0SDdjblRn/ekdITnhDTzJHME45/UnBPQWd1VHZtQWw2/bUQ5ZnVRPQ",
+        "alt_text": "broken pipe"
+        },
+        {
+          "type": "section",
+          "text": {
+            "type": "mrkdwn",
+            "text": {{inputs.text}}
+          }
+        }
+      ]
+    }
+
+tasks:
+  - id: log
+    type: io.kestra.plugin.core.log.Log
+    message: "{{renderOnce(vars.slack_text)}}"
+
+  - id: slack
+    type: io.kestra.plugin.slack.notifications.SlackIncomingWebhook
+    url: "{{secret(namespace='system',key='SLACK_WEBHOOK')}}"
+    messageText: |
+      {{renderOnce(vars.slack_text)}}

@@ -1,0 +1,59 @@
+id: infraAnsiblePlaybook
+namespace: solutions.infra
+
+labels:
+  maintainer: "parham"
+  infra: feature
+  ansible: feature
+
+inputs:
+  - id: image_names
+    type: MULTISELECT
+    values:
+      - ubuntu-20.04-base
+      - centos-8-webserver
+      - photon-os-database
+      - rhel-7-appserver
+    defaults:
+      - ubuntu-20.04-base
+
+tasks:
+  - id: getDeployMachinesListFromAPI
+    type: io.kestra.plugin.core.output.OutputValues
+    values:
+      machines:
+        - hostName: webserver-01.prod.example.com
+          ipAddress: 10.0.0.1
+          owner: prod-webservers-sa
+        - hostName: appserver-02.prod.example.com
+          ipAddress: 10.0.0.2
+          owner: prod-webservers-sa
+        - hostName: db-03.prod.example.com
+          ipAddress: 10.0.0.3
+          owner: prod-dba-sa
+
+  - id: runAnsible
+    type: io.kestra.plugin.core.flow.WorkingDirectory
+    tasks:
+      - id: cloneSourceCode
+        type: io.kestra.plugin.git.Clone
+        url: https://github.com/xdatanomad/kestra-demo.git
+        branch: main
+        # directory: src
+        
+      # - id: listClonedSrc
+      #   type: io.kestra.plugin.fs.local.List
+      #   from: src/
+
+      # - id: logPlaybook
+      #   type: io.kestra.plugin.core.log.Log
+      #   message: "{{ read('supporting_files/ansible/playbook.yaml')}}"
+
+      - id: ansiblePlaybook
+        type: io.kestra.plugin.ansible.cli.AnsibleCLI
+        # inputFiles:
+        #   inventory.ini: "{{ read('inventory.ini') }}"
+        #   myplaybook.yml: "{{ read('myplaybook.yml') }}"
+        containerImage: cytopia/ansible:latest-tools
+        commands:
+          - ansible-playbook -i supporing_files/ansible/inventory.ini supporing_files/ansible/playbook.yaml

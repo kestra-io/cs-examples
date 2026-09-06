@@ -1,0 +1,44 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: kestra
+    metrics_path: /prometheus
+    static_configs:
+      - targets: ["kestra-webserver:8081"]
+        labels:
+          instance: kestra-webserver
+      - targets: ["kestra-scheduler:8081"]
+        labels:
+          instance: kestra-scheduler
+      - targets: ["kestra-executor:8081"]
+        labels:
+          instance: kestra-executor
+      - targets: ["kestra-worker:8081"]
+        labels:
+          instance: kestra-worker
+      # kestra-worker-wg1 disabled in docker-compose.yml (2026-07-21, host-memory
+      # budget) -- re-add this target if that service comes back.
+
+  - job_name: node
+    static_configs:
+      - targets: ["node-exporter:9100"]
+        labels:
+          instance: host
+
+  - job_name: cadvisor
+    static_configs:
+      - targets: ["cadvisor:8080"]
+    metric_relabel_configs:
+      # Drop parent cgroup slices (system.slice, docker root cgroup, etc.) that
+      # aren't a real compose service — only keep actual containers.
+      - source_labels: [container_label_com_docker_compose_service]
+        regex: ""
+        action: drop
+      - source_labels: [container_label_com_docker_compose_service]
+        target_label: service
+      # Strip the high-cardinality label noise cAdvisor attaches per-container
+      # (compose hashes, OCI image annotations, Traefik labels, etc.)
+      - regex: "container_label_.*"
+        action: labeldrop

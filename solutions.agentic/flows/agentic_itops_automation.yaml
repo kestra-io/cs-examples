@@ -1,0 +1,109 @@
+id: agentic_itops_automation
+namespace: solutions.agentic
+description: using agentic flow to triage and automate incident response.
+
+labels:
+  maintainer: "parham"
+  agentic: feature
+  itops-automation: feature
+  jira: feature
+
+triggers:
+  - id: jira_issue
+    type: io.kestra.plugin.core.trigger.Webhook
+    key: "{{secret('YOUR_WEBHOOK_TOKEN')}}"
+
+tasks:
+  - id: log_issue
+    type: io.kestra.plugin.core.debug.Return
+    format: |
+      {{ trigger.body | jq('{
+        id: .issue.id,
+        key: .issue.key,
+        summary: .issue.fields.summary,
+        description: .issue.fields.description,
+        user_name: .user.displayName,
+        user_email: .user.emailAddress,
+        priority_name: .issue.fields.priority.name
+      }') }}
+
+  # ### -- OLD JIRA SEARCH METHOD -- ###
+  # - id: jql_query
+  #   type: io.kestra.plugin.core.debug.Return
+  #   format: 'project = "KAN" AND type IN standardIssueTypes() ORDER BY created DESC'
+
+  # - id: search_issue
+  #   type: io.kestra.plugin.core.http.Request
+  #   method: GET
+  #   uri: "https://kestra-team.atlassian.net/rest/api/3/search/jql?jql={{ outputs.jql_query.value | urlencode }}&maxResults=1&fields=summary,description,creator,created,priority,comment,comments,status"
+  #   headers:
+  #     Accept: "application/json"
+  #     Authorization: "Basic {{ (secret('JIRA_EMAIL') ~ ':' ~ secret('JIRA_API_TOKEN')) | base64encode }}"
+
+  - id: ingest_kb
+    type: io.kestra.plugin.ai.rag.IngestDocument
+    embeddings:
+      type: io.kestra.plugin.ai.embeddings.KestraKVStore
+    provider:
+      type: io.kestra.plugin.ai.provider.GoogleGemini
+      modelName: gemini-embedding-exp-03-07
+    documentSplitter:
+      splitter: "PARAGRAPH"
+      maxOverlapSizeInChars: 512
+      maxSegmentSizeInChars: 1024
+    drop: true
+    fromDocuments:
+      - content: "{{ read('nsfile:///infra_ops_playbook.md') }}"
+
+  - id: invoke_ai
+    type: io.kestra.plugin.ai.rag.ChatCompletion
+    chatProvider:
+      type: io.kestra.plugin.ai.provider.GoogleGemini
+      modelName: gemini-2.5-flash
+    embeddingProvider:
+      type: io.kestra.plugin.ai.provider.GoogleGemini
+      modelName: gemini-embedding-exp-03-07
+    embeddings:
+      type: io.kestra.plugin.ai.embeddings.KestraKVStore
+    systemMessage: |
+      You are an Infra's SRE assistant. Use the provided KB and incident to propose concise triage steps.
+
+      - Always include "Risk", "Steps", and "Verification".
+      - Structure your response in nicely humanly-readable formatted markdown sections. Include newlines to increase readability.
+    prompt: |
+      Incident JSON:
+      {{ outputs.log_issue.value }}
+
+      Produce:
+      - concise_summary
+      - work_notes (bullet list)
+      - proposed_resolution (one paragraph)
+
+  - id: log_ai_resp
+    type: io.kestra.plugin.core.log.Log
+    message: "{{ outputs.invoke_ai.textOutput ?? 'n/a' }}"
+
+  - id: update_comment
+    type: io.kestra.plugin.core.http.Request
+    method: POST
+    uri: "https://kestra-team.atlassian.net/rest/api/3/issue/{{ outputs.log_issue.value | jq('.[].key') | first }}/comment"
+    headers:
+      Accept: "application/json"
+      Authorization: "Basic {{ (secret('JIRA_EMAIL') ~ ':' ~ secret('JIRA_API_TOKEN')) | base64encode }}"
+    body: |
+      {
+        "body": { "content": [{
+              "content": [
+                {
+                  "text": "{{ outputs.invoke_ai.textOutput ?? 'n/a' }}",
+                  "type": "markdown"
+                }
+              ], "type": "paragraph" }],
+          "type": "doc", "version": 1}
+      }
+
+pluginDefaults:
+  - type: io.kestra.plugin.ai.provider.GoogleGemini
+    values:
+      apiKey: "{{ secret(key='GEMINI_KEY', namespace='system') }}"
+      modelName: gemini-2.5-flash

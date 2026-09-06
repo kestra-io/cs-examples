@@ -1,0 +1,140 @@
+id: prescriptive_jvm_sizing
+namespace: solutions.alerting
+description: |
+  Computes recommended -Xmx/-Xms values (and the equivalent -XX:MaxRAMPercentage)
+  per Kestra service instance, based on PEAK heap usage observed in Prometheus
+  over a lookback window, not the instantaneous reading at alert time, since the
+  moment an alert fires is a crisis snapshot, not a representative load pattern.
+
+  Normally called as a subflow from grafana_alert_webhook when the "Host: Memory
+  Utilization High" alert fires, but can also be run manually or on a schedule to
+  refresh the recommendation.
+
+  Recommendation basis: peak observed heap used x safetyFactor (default 1.4;
+  G1GC needs headroom above the working set to avoid constant collection). Xms
+  is set equal to Xmx, the standard recommendation for steady-state server JVMs
+  since it avoids latency from heap resize pauses.
+
+  This flow only recommends: it does not modify docker-compose.yml, application.yaml,
+  or restart any container. Recommendations are only as good as the load actually
+  captured within the lookback window: on a freshly-split or mostly-idle
+  deployment, "peak" will just reflect idle usage, not real production load.
+
+  Compares the fresh recommendation against the jvm_current_xmx_mb KV entry (set
+  by update_jvm_baseline_kv whenever docker-compose.yml is actually changed), so
+  the report says whether an adjustment is actually warranted rather than just
+  restating an absolute number in a vacuum.
+
+inputs:
+  - id: lookbackWindow
+    type: STRING
+    defaults: "24h"
+    description: PromQL range to look back over for peak heap usage (e.g. 24h, 7d).
+  - id: safetyFactor
+    type: FLOAT
+    defaults: 1.4
+    description: Multiplier applied to observed peak heap usage to get the recommended -Xmx.
+  - id: toleranceBandPct
+    type: FLOAT
+    defaults: 15.0
+    description: How far (in %) the recommendation can drift from the current KV baseline before it's flagged as an adjustment, rather than noise.
+
+tasks:
+  - id: get_current_baseline
+    type: io.kestra.plugin.core.kv.Get
+    description: Current -Xmx/-Xms actually configured per instance, as last recorded by update_jvm_baseline_kv.
+    key: jvm_current_xmx_mb
+    errorOnMissing: false
+
+  - id: query_heap_peak
+    type: io.kestra.plugin.core.http.Request
+    description: |
+      Peak heap used per Kestra process instance over the lookback window:
+      max_over_time((sum(jvm_memory_used_bytes{area="heap"}) by (instance))[<lookbackWindow>:5m])
+      URL-encoded below since the lookback window is templated into the middle of it.
+    uri: "http://prometheus:9090/api/v1/query?query=max_over_time%28%28sum%28jvm_memory_used_bytes%7Barea%3D%22heap%22%7D%29%20by%20%28instance%29%29%5B{{ inputs.lookbackWindow }}%3A5m%5D%29"
+    method: GET
+
+  - id: query_host_mem_total
+    type: io.kestra.plugin.core.http.Request
+    description: Total host memory, so the recommendation can also be expressed as a MaxRAMPercentage.
+    uri: "http://prometheus:9090/api/v1/query?query=node_memory_MemTotal_bytes"
+    method: GET
+
+  - id: compute_recommendations
+    type: io.kestra.plugin.scripts.python.Script
+    description: Turn peak heap usage into per-instance -Xmx/-Xms/-XX:MaxRAMPercentage recommendations.
+    dependencies:
+      - kestra
+    script: |
+      from kestra import Kestra
+      import json
+
+      logger = Kestra.logger()
+
+      heap_peak_resp = json.loads('''{{ outputs.query_heap_peak.body }}''')
+      mem_total_resp = json.loads('''{{ outputs.query_host_mem_total.body }}''')
+
+      raw_baseline = '''{{ outputs.get_current_baseline.value ?? '' }}'''
+      current_baseline = json.loads(raw_baseline) if raw_baseline.strip() else {}
+
+      safety_factor = float("{{ inputs.safetyFactor }}")
+      lookback = "{{ inputs.lookbackWindow }}"
+      tolerance_pct = float("{{ inputs.toleranceBandPct }}")
+
+      host_mem_total_bytes = float(mem_total_resp["data"]["result"][0]["value"][1])
+
+      recommendations = []
+      for series in heap_peak_resp["data"]["result"]:
+          instance = series["metric"].get("instance", "unknown")
+          peak_used_bytes = float(series["value"][1])
+          recommended_xmx_bytes = peak_used_bytes * safety_factor
+          recommended_xmx_mb = round(recommended_xmx_bytes / 1024 / 1024)
+          recommended_pct_of_host = round(100 * recommended_xmx_bytes / host_mem_total_bytes, 1)
+
+          current_mb = current_baseline.get(instance)
+          if current_mb is None:
+              verdict = "no baseline recorded — run update_jvm_baseline_kv once this instance has a configured -Xmx"
+              delta_pct = None
+          else:
+              delta_pct = round(100 * (recommended_xmx_mb - current_mb) / current_mb, 1)
+              if abs(delta_pct) <= tolerance_pct:
+                  verdict = f"no change needed (within {tolerance_pct}% tolerance)"
+              else:
+                  direction = "increase" if delta_pct > 0 else "decrease"
+                  verdict = f"{direction} recommended: {current_mb}MB -> {recommended_xmx_mb}MB ({delta_pct:+.1f}%)"
+
+          recommendations.append({
+              "instance": instance,
+              "peak_heap_used_mb": round(peak_used_bytes / 1024 / 1024),
+              "current_xmx_mb": current_mb,
+              "recommended_xmx_mb": recommended_xmx_mb,
+              "recommended_xms_mb": recommended_xmx_mb,
+              "recommended_max_ram_percentage": recommended_pct_of_host,
+              "delta_pct": delta_pct,
+              "verdict": verdict,
+          })
+
+      recommendations.sort(key=lambda r: -r["recommended_xmx_mb"])
+
+      lines = [
+          f"JVM sizing recommendation (lookback={lookback}, safety_factor={safety_factor}x, "
+          f"tolerance={tolerance_pct}%, host_mem_total_mb={round(host_mem_total_bytes / 1024 / 1024)})",
+          "NOTE: basis is PEAK heap used within the lookback window above, not the instant "
+          "the alert fired. If that window was mostly idle, treat these as a starting point, "
+          "not a final answer.",
+      ]
+      for r in recommendations:
+          lines.append(f"{r['instance']}: current={r['current_xmx_mb']}MB peak_used={r['peak_heap_used_mb']}MB -> {r['verdict']}")
+      report = "\n".join(lines)
+
+      logger.info(report)
+
+      Kestra.outputs({
+          "lookback_window": lookback,
+          "safety_factor": safety_factor,
+          "tolerance_pct": tolerance_pct,
+          "host_mem_total_mb": round(host_mem_total_bytes / 1024 / 1024),
+          "recommendations": recommendations,
+          "report": report,
+      })

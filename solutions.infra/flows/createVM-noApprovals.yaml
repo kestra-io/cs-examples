@@ -1,0 +1,212 @@
+id: createVM-noApprovals
+namespace: solutions.infra
+
+tasks:
+  - id: generateCustomHostname
+    type: io.kestra.plugin.core.flow.Subflow
+    namespace: "{{ flow.namespace }}"
+    flowId: generateCustomHostname
+    inputs:
+      cloudProvider: "{{ inputs.cloudProvider }}"
+      env: "{{ inputs.env }}"
+      vmType: "{{ inputs.vmType }}"
+      os: "{{ inputs.os }}"
+    wait: true
+    transmitFailed: true
+    allowWarning: true
+
+  - id: getIPAddress
+    type: io.kestra.plugin.scripts.python.Script
+    beforeCommands:
+      - pip install requests kestra
+    script: |
+      from kestra import Kestra
+      import requests
+
+      IPAM_BASE_URL = "{{ kv('ipamAddress') }}/api/dev-ipam"
+      endpoint = f"subnets/{{inputs.subnet}}/first_free"
+
+      # response = requests.get(f'{IPAM_BASE_URL}/{endpoint}', verify=False)
+      # print(response.status_code)
+      # ip_address = response.json().get("ipAddress")
+      # Kestra.outputs({'status': response.status_code, 'ipAddress': ip_address})
+      ip_address = "10.128.10.{{ outputs['generateCustomHostname'].outputs['nextAvailableIndex'] }}"
+      Kestra.outputs({'status': "200", 'ipAddress': ip_address})
+
+  - id: createVM
+    type: io.kestra.plugin.core.flow.Subflow
+    namespace: "{{ flow.namespace }}"
+    flowId: provisionVMUsingTerraform
+    inputs:
+      vmName: "{{ outputs.generateCustomHostname.outputs.hostname }}"
+      vmSize: "{{ inputs.vmSize }}"
+      zone: "{{ inputs.zone }}"
+      billingAccount: "{{ inputs.billingAccount }}"
+      osFlavor: "{{ inputs.osFlavor }}"
+      network: "{{ inputs.network }}"
+      subnet: "{{ inputs.subnet }}"
+      ipAddress: "{{ outputs.getIPAddress.vars.ipAddress }}"
+    wait: true
+    transmitFailed: true
+    allowWarning: true
+
+  - id: incrementindex
+    disabled: true
+    type: io.kestra.plugin.core.kv.Set
+    key: "{{ (outputs.generateCustomHostname.outputs.hostname | slice(0,3) | upper) ~ '.' ~ (outputs.generateCustomHostname.outputs.hostname | slice(3,6) | upper) ~ '.' ~ (outputs.generateCustomHostname.outputs.hostname | slice(6,9) | upper) ~ '.' ~ (outputs.generateCustomHostname.outputs.hostname | slice(9,11) | upper) }}"
+    kvType: NUMBER
+    value: "{{ (outputs.generateCustomHostname.outputs.nextAvailableIndex | number) + 1 }}"
+    allowFailure: true
+
+  - id: updateIpMapping
+    type: io.kestra.plugin.core.kv.Set
+    key: "externalIpAddressMapping"
+    kvType: JSON
+    value: "{{ (kv(key='externalIpAddressMapping',errorOnMissing=false) ?? {} ) | merge({outputs.generateCustomHostname.outputs.hostname: outputs.createVM.outputs.externalIpAddress}) }}"
+
+labels:
+  - key: "domain"
+    value: "infra"
+  - key: "maintainer"
+    value: "caxe"
+  - key: "kestra.version"
+    value: "1.2.3"
+  - key: "feature"
+    value: "terraform"
+
+inputs:
+  - id: cloudProvider
+    displayName: Cloud Provider
+    type: SELECT
+    values:
+      - AWS
+      - GCP
+      - Azure
+      - VCF
+    defaults: GCP
+
+  - id: billingAccount
+    type: SELECT
+    displayName: Billing Account
+    description: |
+      This is typically your 
+      Account ID for AWS
+      Project ID for GCP
+      Subscription ID for Azure
+    values:
+      - "kestra-sandbox"
+      - "kestra-dev"
+    defaults: "kestra-sandbox"
+    dependsOn:
+      inputs:
+        - cloudProvider
+      condition: "{{ inputs.cloudProvider == 'GCP' }}"
+
+  - id: region
+    type: SELECT
+    displayName: Region
+    values:
+      - "us-central1"
+      - "us-east1"
+    dependsOn:
+      inputs:
+        - billingAccount
+      condition: "{{ inputs.billingAccount == 'kestra-sandbox' }}"
+    defaults: "us-central1"
+
+  - id: zone
+    type: SELECT
+    displayName: Zone
+    values:
+      - "us-central1-a"
+      - "us-central1-b"
+    dependsOn:
+      inputs:
+        - region
+      condition: "{{ inputs.region == 'us-central1' }}"
+    defaults: "us-central1-a"
+
+  - id: os
+    displayName: Operating System
+    type: SELECT
+    values:
+      - "Windows"
+      - "Linux"
+    defaults: "Linux"
+
+  - id: osFlavor
+    displayName: OS Version
+    type: SELECT
+    values:
+      - Ubuntu 24.04
+      - Ubuntu 20.04
+      - ubuntu-minimal-2210-kinetic-amd64-v20230126
+      - ubuntu-os-cloud/ubuntu-2204-lts
+    defaults: ubuntu-os-cloud/ubuntu-2204-lts
+    dependsOn:
+      inputs:
+        - os
+      condition: "{{ inputs.os == 'Linux' }}"
+
+  - id: vmSize
+    displayName: VM Size
+    type: SELECT
+    values:
+      - Small
+      - Medium
+      - Large
+      - n1-standard-1
+    description: |
+      Small   - 2 vCPUs 4 GB RAM
+      Medium  - 4 vCPUs 8 GB RAM
+      Large   - 8 vCPUs 16 GB RAM
+    defaults: n1-standard-1
+
+  - id: network
+    displayName: Network
+    type: SELECT
+    values:
+      - pg-gcp-demo-vpc
+      - vpc-02
+    defaults: pg-gcp-demo-vpc
+
+  - id: subnet
+    displayName: Subnet
+    type: SELECT
+    values:
+      - pg-gcp-demo-vpc
+      - subnet-02
+    defaults: pg-gcp-demo-vpc
+
+  - id: addToAD
+    type: BOOL
+    displayName: Add to Active Directory
+    defaults: true
+
+  - id: vmType
+    type: SELECT
+    displayName: Type of VM
+    values:
+      - Application
+      - Database
+      - Server
+    defaults: Application
+
+  - id: env
+    type: SELECT
+    displayName: Environment
+    values:
+      - Development
+      - Staging
+      - Production
+    defaults: Development
+
+  - id: baselineApps
+    displayName: Baseline Applications to Install
+    type: MULTISELECT
+    values:
+      - sysstat
+      - httpd
+    defaults:
+      - sysstat
+      - httpd

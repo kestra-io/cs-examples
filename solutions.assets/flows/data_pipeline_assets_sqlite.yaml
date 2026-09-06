@@ -1,0 +1,125 @@
+id: data_pipeline_assets_sqlite
+namespace: solutions.assets
+
+labels:
+  maintainer: "parham"
+  assets: feature
+  data: feature
+
+concurrency:
+  behavior: QUEUE
+  limit: 5
+
+tasks:
+  # ==== REGISTER ASSETS ====
+  # =========================
+  - id: create_staging_layer_asset
+    type: io.kestra.plugin.jdbc.sqlite.Queries
+    url: jdbc:sqlite:myfile.db
+    outputDbFile: true
+    sql: |
+      CREATE TABLE IF NOT EXISTS trips (
+          VendorID INTEGER,
+          passenger_count INTEGER,
+          trip_distance REAL
+      );
+      
+      INSERT INTO trips (VendorID, passenger_count, trip_distance) VALUES
+      (1, 1, 1.5),
+      (1, 2, 2.3),
+      (2, 1, 0.8),
+      (2, 3, 3.1),
+      (1, 1, 1.2),
+      (2, 2, 2.5),
+      (1, 4, 4.2),
+      (2, 1, 0.9),
+      (1, 2, 2.1),
+      (2, 3, 3.7);
+    assets:
+      inputs: []
+      outputs:
+        - id: trips
+          type: io.kestra.plugin.ee.assets.Table
+          namespace: "{{flow.namespace}}"
+          metadata:
+            model_layer: staging
+            
+  - id: for_each
+    type: io.kestra.plugin.core.flow.ForEach
+    values:
+      - passenger_count
+      - trip_distance
+    tasks:
+      - id: create_mart_layer_asset
+        type: io.kestra.plugin.jdbc.sqlite.Queries
+        url: jdbc:sqlite:myfile.db
+        sqliteFile: "{{ outputs.create_staging_layer_asset.databaseUri }}"
+        outputDbFile: true
+        sql: |
+          CREATE TABLE IF NOT EXISTS avg_{{taskrun.value}} AS
+          SELECT AVG({{taskrun.value}}) AS avg_{{taskrun.value}} FROM trips;
+        assets:
+          inputs:
+            - id: trips
+          outputs:
+            - id: avg_{{taskrun.value}}
+              type: io.kestra.plugin.ee.assets.Table
+              namespace: "{{flow.namespace}}"
+              metadata:
+                model_layer: mart
+
+
+  # ==== OPERATING ON DOWNSTREAM ASSETS ====
+  # ========================================
+  - id: log_downstream_assets
+    type: io.kestra.plugin.core.debug.Return
+    format: '{{ assets(metadata={"model_layer": "mart"}) }}'
+    
+  - id: update_downstream_assets
+    type: io.kestra.plugin.core.flow.ForEach
+    values: '{{ assets(metadata={"model_layer": "mart"}) | jq(".[].id") }}'
+    tasks:
+      - id: log_table
+        type: io.kestra.plugin.core.log.Log
+        message: "Asset Table: {{ taskrun.value }}"
+
+      - id: update_mart_assets
+        type: io.kestra.plugin.jdbc.sqlite.Queries
+        url: jdbc:sqlite:myfile.db
+        outputDbFile: false
+        fetchType: FETCH_ONE
+        sql: |
+          SELECT 1;
+
+  - id: export_assets_to_file
+    type: io.kestra.plugin.ee.assets.AssetShipper
+    assetExporters:
+      - id: file_exporter
+        type: io.kestra.plugin.ee.assets.FileAssetExporter
+        format: JSON
+  
+  # - id: export_assets_to_openlineage
+  #   type: io.kestra.plugin.ee.assets.AssetShipper
+  #   assetExporters:
+  #     - id: openlineage_exporter
+  #       type: io.kestra.plugin.ee.openlineage.OpenLineageAssetExporter
+  #       uri: http://host.docker.internal:5000
+  #       mappings:
+  #         io.kestra.plugin.ee.assets.Table:
+  #           namespace: "{{ flow.namespace }}"
+
+pluginDefaults:
+  - type: io.kestra.plugin.jdbc.sqlite
+    values:
+      url: jdbc:sqlite:myfile.db
+      fetchType: NONE
+
+triggers:
+  - id: daily_5am_schedule
+    type: io.kestra.plugin.core.trigger.Schedule
+    cron: "0 5 * * *"
+    disabled: true
+    
+  - id: github_action_webhook
+    type: io.kestra.plugin.core.trigger.Webhook
+    key: "{{secret('YOUR_WEBHOOK_TOKEN')}}" # Replace with a strong, unique key

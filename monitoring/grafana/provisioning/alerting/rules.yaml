@@ -1,0 +1,319 @@
+apiVersion: 1
+
+groups:
+  - orgId: 1
+    name: kestra-capacity-alerts
+    folder: Kestra
+    interval: 1m
+    rules:
+      - uid: kestra-worker-thread-util
+        title: "Kestra: Worker Thread Pool Utilization High"
+        condition: C
+        for: 5m
+        noDataState: OK
+        execErrState: Error
+        labels:
+          severity: critical
+          threshold: "95"
+          unit: "%"
+        annotations:
+          summary: "Worker thread pool utilization has been above 95% for 5+ minutes on at least one instance."
+          description: "Add more worker threads or worker replicas to the affected instance (see the 'instance' label on this alert). See the Worker Thread Pool Utilization % panel on the Kestra Overview dashboard."
+        data:
+          - refId: A
+            datasourceUid: prometheus
+            relativeTimeRange: { from: 600, to: 0 }
+            model:
+              refId: A
+              expr: "100 * sum(kestra_worker_job_running) by (instance) / sum(kestra_worker_job_thread) by (instance)"
+              instant: true
+              intervalMs: 1000
+              maxDataPoints: 43200
+          - refId: B
+            datasourceUid: "__expr__"
+            model:
+              refId: B
+              type: reduce
+              expression: A
+              reducer: last
+          - refId: C
+            datasourceUid: "__expr__"
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator: { type: gt, params: [95] }
+
+      - uid: kestra-db-pool-util
+        title: "Kestra: DB Pool Utilization High"
+        condition: C
+        for: 5m
+        noDataState: OK
+        execErrState: Error
+        labels:
+          severity: critical
+          threshold: "95"
+          unit: "%"
+        annotations:
+          summary: "Postgres connection pool utilization has been above 95% for 5+ minutes."
+          description: "Raise maximum-pool-size in the Kestra datasource config. See the DB Pool Utilization (Active / Max) panel on the Kestra Overview dashboard."
+        data:
+          - refId: A
+            datasourceUid: prometheus
+            relativeTimeRange: { from: 600, to: 0 }
+            model:
+              refId: A
+              expr: "100 * sum(hikaricp_connections_active) / sum(hikaricp_connections_max)"
+              instant: true
+              intervalMs: 1000
+              maxDataPoints: 43200
+          - refId: B
+            datasourceUid: "__expr__"
+            model:
+              refId: B
+              type: reduce
+              expression: A
+              reducer: last
+          - refId: C
+            datasourceUid: "__expr__"
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator: { type: gt, params: [95] }
+
+      - uid: kestra-db-pool-pending
+        title: "Kestra: DB Pool Pending Connections"
+        condition: C
+        for: 2m
+        noDataState: OK
+        execErrState: Error
+        labels:
+          severity: critical
+          threshold: "0"
+          unit: ""
+        annotations:
+          summary: "Threads are blocked waiting for a free database connection."
+          description: "This should always sit at 0. Increase maximum-pool-size, adding worker threads will not help. See the DB Pool Pending Connections panel on the Kestra Overview dashboard."
+        data:
+          - refId: A
+            datasourceUid: prometheus
+            relativeTimeRange: { from: 600, to: 0 }
+            model:
+              refId: A
+              expr: "sum(hikaricp_connections_pending)"
+              instant: true
+              intervalMs: 1000
+              maxDataPoints: 43200
+          - refId: B
+            datasourceUid: "__expr__"
+            model:
+              refId: B
+              type: reduce
+              expression: A
+              reducer: last
+          - refId: C
+            datasourceUid: "__expr__"
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator: { type: gt, params: [0] }
+
+      - uid: kestra-db-acquire-time
+        title: "Kestra: DB Connection Acquire Time High"
+        condition: C
+        for: 5m
+        noDataState: OK
+        execErrState: Error
+        labels:
+          severity: warning
+          threshold: "0.5"
+          unit: "s"
+        annotations:
+          summary: "Average time to acquire a DB connection has been above 500ms for 5+ minutes."
+          description: "Early warning before pool exhaustion. See the DB Connection Acquire Time (avg) panel on the Kestra Overview dashboard."
+        data:
+          - refId: A
+            datasourceUid: prometheus
+            relativeTimeRange: { from: 600, to: 0 }
+            model:
+              refId: A
+              expr: "sum(rate(hikaricp_connections_acquire_seconds_sum[5m])) / sum(rate(hikaricp_connections_acquire_seconds_count[5m]))"
+              instant: true
+              intervalMs: 1000
+              maxDataPoints: 43200
+          - refId: B
+            datasourceUid: "__expr__"
+            model:
+              refId: B
+              type: reduce
+              expression: A
+              reducer: last
+          - refId: C
+            datasourceUid: "__expr__"
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator: { type: gt, params: [0.5] }
+
+      - uid: kestra-jvm-heap-util
+        title: "Kestra: JVM Heap Utilization High"
+        condition: C
+        for: 5m
+        noDataState: OK
+        execErrState: Error
+        labels:
+          severity: critical
+          threshold: "90"
+          unit: "%"
+        annotations:
+          summary: "JVM heap utilization has been above 90% for 5+ minutes on at least one instance."
+          description: "Increase container/heap memory on the affected instance (see the 'instance' label on this alert). See the JVM Heap Utilization % panel on the Kestra Overview dashboard."
+        data:
+          - refId: A
+            datasourceUid: prometheus
+            relativeTimeRange: { from: 600, to: 0 }
+            model:
+              refId: A
+              expr: "100 * sum(jvm_memory_used_bytes{area=\"heap\"}) by (instance) / sum(jvm_memory_max_bytes{area=\"heap\"} > 0) by (instance)"
+              instant: true
+              intervalMs: 1000
+              maxDataPoints: 43200
+          - refId: B
+            datasourceUid: "__expr__"
+            model:
+              refId: B
+              type: reduce
+              expression: A
+              reducer: last
+          - refId: C
+            datasourceUid: "__expr__"
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator: { type: gt, params: [90] }
+
+      - uid: kestra-task-queued-time
+        title: "Kestra: Task Queued Time High"
+        condition: C
+        for: 5m
+        noDataState: OK
+        execErrState: Error
+        labels:
+          severity: critical
+          threshold: "5"
+          unit: "s"
+        annotations:
+          summary: "Average task queued time has been above 5s for 5+ minutes."
+          description: "Tasks are experiencing real user-facing delay. Add worker threads or worker replicas. See the Task Queued Time (Worker, avg / max) panel on the Kestra Overview dashboard."
+        data:
+          - refId: A
+            datasourceUid: prometheus
+            relativeTimeRange: { from: 600, to: 0 }
+            model:
+              refId: A
+              expr: "sum(rate(kestra_worker_queued_duration_seconds_sum[5m])) / sum(rate(kestra_worker_queued_duration_seconds_count[5m]))"
+              instant: true
+              intervalMs: 1000
+              maxDataPoints: 43200
+          - refId: B
+            datasourceUid: "__expr__"
+            model:
+              refId: B
+              type: reduce
+              expression: A
+              reducer: last
+          - refId: C
+            datasourceUid: "__expr__"
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator: { type: gt, params: [5] }
+
+      - uid: kestra-host-disk-usage
+        title: "Host: Disk Usage High"
+        condition: C
+        for: 5m
+        noDataState: OK
+        execErrState: Error
+        labels:
+          severity: critical
+          threshold: "90"
+          unit: "%"
+        annotations:
+          summary: "Docker data-root disk usage has been above 90% for 5+ minutes."
+          description: "A full disk can crash containers outright: Postgres and Kestra's local storage both fail writes when out of space. Free up space or grow the disk. See the Host Disk Usage % panel on the Kestra Overview dashboard."
+        data:
+          - refId: A
+            datasourceUid: prometheus
+            relativeTimeRange: { from: 600, to: 0 }
+            model:
+              refId: A
+              expr: "100 * (1 - (node_filesystem_avail_bytes{mountpoint=\"/\", fstype=\"ext4\"} / node_filesystem_size_bytes{mountpoint=\"/\", fstype=\"ext4\"}))"
+              instant: true
+              intervalMs: 1000
+              maxDataPoints: 43200
+          - refId: B
+            datasourceUid: "__expr__"
+            model:
+              refId: B
+              type: reduce
+              expression: A
+              reducer: last
+          - refId: C
+            datasourceUid: "__expr__"
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator: { type: gt, params: [90] }
+
+      - uid: kestra-host-memory-usage
+        title: "Host: Memory Utilization High"
+        condition: C
+        for: 5m
+        noDataState: OK
+        execErrState: Error
+        labels:
+          severity: critical
+          threshold: "90"
+          unit: "%"
+        annotations:
+          summary: "Host memory utilization has been above 90% for 5+ minutes."
+          description: "Every JVM on this host defaults to 50% of total host RAM with no per-container memory limit set, so this is expected to trip under normal load until limits are added per Kestra service. Sustained high host memory risks the OOM killer terminating containers outright. See the Host Memory Utilization % panel on the Kestra Overview dashboard."
+        data:
+          - refId: A
+            datasourceUid: prometheus
+            relativeTimeRange: { from: 600, to: 0 }
+            model:
+              refId: A
+              expr: "100 * (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes))"
+              instant: true
+              intervalMs: 1000
+              maxDataPoints: 43200
+          - refId: B
+            datasourceUid: "__expr__"
+            model:
+              refId: B
+              type: reduce
+              expression: A
+              reducer: last
+          - refId: C
+            datasourceUid: "__expr__"
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator: { type: gt, params: [90] }

@@ -1,0 +1,53 @@
+id: fire_all_alerts
+namespace: solutions.alerting
+description: |
+  Synthetic load-generation flow to exercise the Grafana alert rules configured for
+  the Kestra Overview dashboard (Worker Thread Pool Utilization, Task Queued Time, DB
+  Pool Utilization / Pending Connections / Acquire Time, JVM Heap Utilization).
+
+  Dispatches ~600 Sleep tasks across three parallel ForEach branches, each with an
+  independently randomized duration (5-10 min), comfortably exceeding this instance's
+  current total worker thread capacity (320 threads across kestra-standalone +
+  kestra-worker-wg1). Randomized durations stagger completions so the pool stays
+  saturated continuously for several minutes, instead of one synchronized wave
+  completing all at once and creating a clean (and alert-defeating) cutoff.
+
+  Reliably fires: Worker Thread Pool Utilization High, Task Queued Time High.
+  Plausible side effect, not guaranteed: DB Pool Utilization / Pending Connections /
+  Acquire Time High, from the burst of internal execution-state writes this creates.
+  Will not fire: JVM Heap Utilization High. Deliberately not attempted here since
+  forcing real heap pressure risks destabilizing this shared instance. Verify that
+  rule's delivery path via the Grafana contact-point Test button instead.
+
+  Run manually against a non-critical instance only.
+
+tasks:
+  - id: load_burst
+    type: io.kestra.plugin.core.flow.Parallel
+    tasks:
+      - id: saturate_stream_a
+        type: io.kestra.plugin.core.flow.ForEach
+        values: "{{ range(1, 200) }}"
+        concurrencyLimit: 0
+        tasks:
+          - id: hold_thread_a
+            type: io.kestra.plugin.core.flow.Sleep
+            duration: "PT{{ randomInt(300, 600) }}S"
+
+      - id: saturate_stream_b
+        type: io.kestra.plugin.core.flow.ForEach
+        values: "{{ range(1, 200) }}"
+        concurrencyLimit: 0
+        tasks:
+          - id: hold_thread_b
+            type: io.kestra.plugin.core.flow.Sleep
+            duration: "PT{{ randomInt(300, 600) }}S"
+
+      - id: saturate_stream_c
+        type: io.kestra.plugin.core.flow.ForEach
+        values: "{{ range(1, 200) }}"
+        concurrencyLimit: 0
+        tasks:
+          - id: hold_thread_c
+            type: io.kestra.plugin.core.flow.Sleep
+            duration: "PT{{ randomInt(300, 600) }}S"

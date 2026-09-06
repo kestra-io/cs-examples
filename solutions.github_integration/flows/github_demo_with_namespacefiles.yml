@@ -1,0 +1,72 @@
+id: github_demo_with_namespacefiles
+namespace: solutions.github_integration
+description: |
+  Run scripts from namespace files. Namespace files are synced from a git repo 
+  outside the scope of this flow. A separate system flow syncs the namespace files
+  from a git repo.
+
+  ### NOTES
+  Best Practices:
+    - Crearte a system flow and use SyncNamespaceFiles plugin to sync namespace files.
+    - Best to use one working dir per flow. Create subflows if needed.
+    - Do not nest more than one working dir. Use subflows instead.
+    - Do not nest working dirs within multiple ForEach loops.
+
+labels:
+  - key: demo
+    value: github_integration
+  - key: maintainer
+    value: parham
+  - key: concepts 
+    value: nsfiles, SyncNamespaceFiles
+
+tasks:
+  - id: hello
+    type: io.kestra.plugin.core.log.Log
+    message: Github integration demo flow! 🚀
+    
+  # ==== WorkingDir ====
+  # 1) create a working dir to share files within subsequent tasks
+  #    scripting tasks use namespace files copied here.
+  - id: my_working_dir
+    type: io.kestra.plugin.core.flow.WorkingDirectory
+    tasks:
+      # sample datafile for scripting tasks below
+      - id: create_csv
+        type: io.kestra.plugin.core.storage.Write
+        content: |
+          first_name,last_name,email,signup_date
+          Ada,Lovelace,ada@example.com,1843-12-10
+          Grace,Hopper,grace@example.com,1906-12-09
+          Katherine,Johnson,kj@example.com,1918-08-26
+        extension: ".csv"
+
+      # copy select namespace files into the working dir
+      - id: shell_task
+        type: io.kestra.plugin.scripts.shell.Commands
+        namespaceFiles:
+          enabled: true
+          include:
+            - pre-process/check.sh
+        commands:
+          - echo "cwd=$(pwd)"
+          - realpath check.sh
+          - chmod +x ./pre-process/check.sh
+          # check permissions
+          - ls -l ./pre-process/check.sh
+          # run the script
+          - ./pre-process/check.sh "{{outputs.create_csv.uri}}"
+
+      # copy select namespace files into the working dir
+      - id: python_task
+        type: io.kestra.plugin.scripts.python.Commands
+        containerImage: python:3.13-slim
+        dependencies:
+          - pandas
+          - click
+        namespaceFiles:
+          enabled: true
+          include:
+            - pre-process/pre_process.py
+        commands:
+          - python3 pre-process/pre_process.py --input-file="{{outputs.create_csv.uri}}" --column-names="first_name,last_name,email"

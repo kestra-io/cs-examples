@@ -1,0 +1,49 @@
+id: multiVersionExtensibility
+namespace: solutions.flexibility
+
+description: |
+  Extensibility demo, paired with the F.I.R.E. blog post's "Extensibility"
+  pillar: because every task runs in its own isolated container, a single
+  flow (or namespace) can run multiple versions of the same language/tool
+  side by side — evaluate a new version without touching what's already
+  running in production.
+
+  This flow runs the same script logic against Python 3.9 and Python 3.13
+  in two separate tasks, each pinned to its own containerImage. Neither
+  affects the other, and neither affects any other flow's Python version.
+
+  Kestra Enterprise takes this further with Versioned Plugins — installing
+  and running multiple versions of the SAME plugin side by side (e.g.
+  Ansible 2.16 in production, Ansible 2.19 under evaluation, in a separate
+  namespace) — see
+  https://kestra.io/docs/enterprise/instance/versioned-plugins.
+  New connectors that don't exist yet can also be added via custom plugin
+  development — see https://kestra.io/docs/how-to-guides/custom-plugin.
+
+labels:
+  - key: "maintainer"
+    value: "faizan"
+  - key: "feature"
+    value: "extensibility"
+
+tasks:
+  - id: run_on_python_3_9
+    type: io.kestra.plugin.scripts.python.Script
+    containerImage: python:3.9-slim
+    script: |
+      import sys
+      print(f"Running on Python {sys.version}")
+
+  - id: run_on_python_3_13
+    type: io.kestra.plugin.scripts.python.Script
+    containerImage: python:3.13-slim
+    script: |
+      import sys
+      print(f"Running on Python {sys.version}")
+
+  - id: confirm_isolation
+    type: io.kestra.plugin.core.log.Log
+    message: |
+      ✅ run_on_python_3_9 and run_on_python_3_13 just ran in the same flow,
+      each in its own isolated container — check each task's own log output
+      above to see the different interpreter versions reported.

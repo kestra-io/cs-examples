@@ -1,0 +1,38 @@
+id: update_jvm_baseline_kv
+namespace: solutions.alerting
+description: |
+  Records the -Xmx/-Xms (MB) actually configured right now per Kestra service
+  in docker-compose.yml, into the solutions.alerting KV store under the key
+  jvm_current_xmx_mb. prescriptive_jvm_sizing reads this key to compare its
+  freshly-computed recommendation against what's really deployed, instead of
+  reporting an absolute number in a vacuum.
+
+  Run this manually whenever you actually change a service's JAVA_OPTS in
+  docker-compose.yml and restart it, so the KV baseline keeps tracking reality.
+  This flow does not read docker-compose.yml or touch any container itself: it
+  only records whatever you pass it as the new source of truth.
+
+inputs:
+  - id: baseline
+    type: JSON
+    description: |
+      Map of instance name to its currently configured -Xmx (== -Xms) in MB.
+    defaults: |
+      {
+        "kestra-webserver": 1502,
+        "kestra-scheduler": 764,
+        "kestra-executor": 951,
+        "kestra-worker": 534,
+        "kestra-worker-wg1": 630
+      }
+
+tasks:
+  - id: set_baseline
+    type: io.kestra.plugin.core.kv.Set
+    key: jvm_current_xmx_mb
+    kvType: JSON
+    value: "{{ inputs.baseline }}"
+
+  - id: log_baseline
+    type: io.kestra.plugin.core.log.Log
+    message: "jvm_current_xmx_mb set to: {{ inputs.baseline }}"

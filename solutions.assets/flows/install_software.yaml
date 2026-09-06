@@ -1,0 +1,25 @@
+id: install_software
+namespace: company.team
+labels:
+  - key: feature
+    value: assets
+inputs:
+  - id: target_vm
+    type: STRING
+    defaults: "windows-web-01"
+
+tasks:
+  - id: choco_install_nginx
+    type: io.kestra.plugin.core.log.Log
+    message: "choco install nginx -y"
+    assets:
+      inputs:
+        - id: "{{ inputs.target_vm | slugify }}"
+      outputs:
+        - id: "{{ 'nginx-' ~ execution.id }}"
+          type: io.kestra.plugin.ee.assets.VM.Ingress
+          metadata:
+            version: "1.24.0"
+            installed_on: "{{ inputs.target_vm }}"
+            vm: "{{ inputs.target_vm }}"
+            type: nginx

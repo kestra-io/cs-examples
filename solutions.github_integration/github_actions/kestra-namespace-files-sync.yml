@@ -1,0 +1,27 @@
+name: sync_kestra_namespace_files
+
+on:
+  push: 
+    # Triggers on commits to the kestra branch
+    branches:
+      - kestra  
+  # Uncomment the following lines to enable PR trigger
+  # pull_request:
+  #   types: [closed]  # This should be indented under pull_request
+  #   branches:
+  #     - kestra  # Triggers when a PR is opened/updated against the kestra branch
+
+jobs:
+  trigger-kestra:
+    runs-on: ubuntu-latest   
+    steps: 
+      - name: send_kestra_webhook
+        run: |
+          curl -X POST "https://partners.kestra.cloud/api/v1/demo/executions/webhook/system/github_sys_sync_namespacefiles/${{ secrets.KESTRA_WEBHOOK_KEY }}" \
+          -H "Content-Type: application/json" \
+          -d '{
+            "commit_sha": "${{ github.sha }}",
+            "ref": "${{ github.ref }}",
+            "actor": "${{ github.actor }}",
+            "message": "Triggered by GitHub Action"
+          }'

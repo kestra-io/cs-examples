@@ -1,0 +1,77 @@
+id: infraBuildDeployImagesToVCenter
+namespace: solutions.infra
+
+labels:
+  maintainer: "parham"
+  vcenter: feature
+  infra: feature
+
+inputs:
+  - id: image_names
+    type: MULTISELECT
+    values:
+      - ubuntu-20.04-base
+      - centos-8-webserver
+      - photon-os-database
+      - rhel-7-appserver
+    defaults:
+      - ubuntu-20.04-base
+
+tasks:
+  - id: getDeployMachinesListFromAPI
+    type: io.kestra.plugin.core.output.OutputValues
+    values:
+      machines:
+        - hostName: webserver-01.prod.example.com
+          ipAddress: 10.0.0.1
+          owner: prod-webservers-sa
+        - hostName: appserver-02.prod.example.com
+          ipAddress: 10.0.0.2
+          owner: prod-webservers-sa
+        - hostName: db-03.prod.example.com
+          ipAddress: 10.0.0.3
+          owner: prod-dba-sa
+
+  - id: buildImages
+    type: io.kestra.plugin.core.flow.WorkingDirectory
+    tasks:
+      - id: cloneSourceCode
+        type: io.kestra.plugin.git.Clone
+        url: https://github.com/xdatanomad/kestra-demo.git
+        branch: main
+        directory: src
+
+      - id: buildDockerImage
+        type: io.kestra.plugin.docker.Build
+        tags:
+          - my-app-image:latest
+        dockerfile: |
+          FROM alpine:latest
+          WORKDIR /app
+          # Copy a file from the cloned repository.
+          COPY src/README.md .
+          RUN cat README.md
+        # The imageId output can be used by downstream tasks
+        # e.g., {{ outputs.buildDockerImage.imageId }}
+
+      - id: validateImage
+        type: io.kestra.plugin.scripts.powershell.Commands
+        commands:
+          - "Write-Host \"Docker image 'my-app-image:latest' built with ID: {{ outputs.buildDockerImage.imageId }}\""
+
+  - id: deployImages
+    type: io.kestra.plugin.core.flow.ForEach
+    concurrencyLimit: 2
+    values: "{{ outputs.getDeployMachinesListFromAPI.values.machines }}"
+    tasks:       
+      - id: deployImageToMachine
+        type: io.kestra.plugin.core.flow.Subflow
+        namespace: solutions.infra
+        flowId: infraDeployImage
+        inputs:
+          machine: "{{ taskrun.value | jq('.hostName') | first }}"
+          ipAddress: "{{ taskrun.value | jq('.ipAddress') | first }}"
+          user: "{{ taskrun.value | jq('.owner') | first  }}"
+          image: "{{ outputs.buildDockerImage.imageId }}"
+        wait: true
+        transmitFailed: true

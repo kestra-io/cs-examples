@@ -1,0 +1,148 @@
+id: dynamicRecovery
+namespace: solutions.resilience
+
+description: |
+  Resilience capabilities demo:
+  1. automaticRestartFlakyApi — flaky task that succeeds after automatic retries
+  2. deployWithRollback       — rollback on a failed downstream check
+  3. restartFlakySystem       — automatic recovery (restart + poll until healthy)
+  4. guaranteedFailureSLA     — shell task sleeps past the SLA window on purpose
+
+  RCA (step 4 of the original 5) now lives in its own flow: investigateFailure.yaml,
+  fired via a Flow trigger the moment this flow is CANCELLED by its own SLA below.
+
+labels:
+  - key: "maintainer"
+    value: "faizan"
+  - key: "feature"
+    value: "resilience"
+
+tasks:
+  # --- 1. FLAKY TASK, SUCCEEDS AFTER AUTOMATIC RESTARTS ---
+  - id: automaticRestartFlakyApi
+    disabled: false
+    type: io.kestra.plugin.core.http.Request
+    uri: "http://httpbin/status/200,500"
+    retry:
+      type: exponential
+      behavior: RETRY_FAILED_TASK
+      delayFactor: 2
+      interval: PT3S
+      maxAttempts: 5
+      maxInterval: PT30S
+
+  # --- 2. ROLLBACK ON FAILURE ---
+  - id: deployWithRollback
+    type: io.kestra.plugin.core.flow.Sequential
+    # Rollback already runs its own recovery via errors: below; allowFailure
+    # keeps that from also cancelling/failing the overall flow, so the ONLY
+    # thing that can breach the SLA / land the flow in CANCELLED is task 4.
+    allowFailure: true
+    tasks:
+      - id: set_version_v2
+        type: io.kestra.plugin.core.kv.Set
+        key: "app_version"
+        value: "v2"
+
+      - id: deploy_v2
+        type: io.kestra.plugin.core.flow.Sleep
+        duration: PT10S
+
+      - id: smoke_test_v2
+        type: io.kestra.plugin.core.execution.Fail
+        errorMessage: "Smoke test failed on v2 — p99 latency exceeded 2s threshold"
+
+    errors:
+      - id: rollback_to_v1
+        type: io.kestra.plugin.core.kv.Set
+        key: "app_version"
+        value: "v1"
+
+      - id: log_rollback
+        type: io.kestra.plugin.core.flow.Sleep
+        duration: PT10S
+
+  # --- 3. AUTOMATIC RECOVERY (RESTART A FLAKY SYSTEM) ---
+  # Seed the "system" as unhealthy, then loop until it reports healthy.
+  # Each failed call triggers a self-recovery subflow that flips the KV
+  # entry back to a healthy status before the loop tries again.
+  - id: seed_flaky_system_down
+    type: io.kestra.plugin.core.kv.Set
+    key: "flaky_system_status"
+    value: "500"
+
+  # LoopUntil's `condition` can only see outputs of its DIRECT children,
+  # so the attempt lives in its own subflow (attemptFlakyCall) and
+  # reports back via a single `status` output — one level down,
+  # exactly like `outputs.<child>.outputs.status`.
+  - id: recovery_loop
+    type: io.kestra.plugin.core.flow.LoopUntil
+    condition: "{{ outputs.attempt_flaky_call.outputs.status == 'success' }}"
+    checkFrequency:
+      interval: PT5S
+      maxDuration: PT1M
+      maxIterations: 5
+    failOnMaxReached: true
+    tasks:
+      - id: attempt_flaky_call
+        type: io.kestra.plugin.core.flow.Subflow
+        namespace: solutions.resilience
+        flowId: attemptFlakyCall
+        wait: true
+        transmitFailed: false
+
+      # Purely cosmetic — makes the failed iteration visible as a red
+      # task on the Gantt chart. allowFailure means it never actually
+      # threatens the loop; recover_if_failed below does the real work.
+      - id: check_status
+        type: io.kestra.plugin.core.execution.Fail
+        runIf: "{{ outputs.attempt_flaky_call.outputs.status == 'failure' }}"
+        errorMessage: "FlakySystem call failed — attempting self-healing"
+        allowFailure: true
+
+      - id: trigger_self_recovery
+        type: io.kestra.plugin.core.flow.Subflow
+        runIf: "{{ outputs.attempt_flaky_call.outputs.status == 'failure' }}"
+        namespace: solutions.resilience
+        flowId: resetFlakySystem
+        wait: true
+        transmitFailed: false
+
+      - id: explain_the_scenario
+        runIf: "{{ outputs.attempt_flaky_call.outputs.status == 'failure' }}"
+        type: io.kestra.plugin.core.flow.Sleep
+        duration: PT20S
+
+  - id: log_recovered
+    type: io.kestra.plugin.core.log.Log
+    message: "✅ flaky-service confirmed healthy after self-recovery via subflow"
+
+  # --- 4. GUARANTEED FAILURE -> SLA BREACH ---
+  # Sleeps well past the SLA window on purpose — this is the exact line the
+  # RCA in investigateFailure.yaml points back to. Live fix: drop `sleep 60`
+  # to `sleep 5` (comfortably under the SLA below) and hit Replay on this
+  # task to complete the talk track.
+  - id: guaranteedFailureSLA
+    type: io.kestra.plugin.scripts.shell.Commands
+    commands:
+      - echo "🔥 Simulated hard failure — sleeping longer than the SLA on purpose"
+      - sleep 60
+
+errors:
+  - id: notify_flow_failure
+    type: io.kestra.plugin.core.log.Log
+    message: |
+      🚨 Flow {{ flow.id }} failed at task {{ task.id }}
+      {{ errorLogs() }}
+
+# tasks 1-3 land around ~50-60s typical, so `sleep 60` (task 4) pushes the
+# total to ~110-120s — clears this 90s SLA with room to spare. `sleep 5`
+# (the live fix) keeps the total around ~55-65s, comfortably under it.
+sla:
+  - id: resilience_demo_sla
+    type: MAX_DURATION
+    duration: PT90S
+    behavior: CANCEL
+    labels:
+      sla: breach
+      reason: "guaranteedFailureSLA task slept past the allotted recovery window"

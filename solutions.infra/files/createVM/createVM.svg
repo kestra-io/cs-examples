@@ -1,0 +1,41 @@
+<svg
+  xmlns="http://www.w3.org/2000/svg"
+  width="128"
+  height="128"
+  viewBox="0 0 128 128"
+>
+  <!-- Outer frame (server outline) -->
+  <rect
+    x="24"
+    y="28"
+    width="80"
+    height="52"
+    rx="6"
+    fill="#232F3E"
+  />
+
+  <!-- Inner "virtual machine" block -->
+  <rect
+    x="38"
+    y="42"
+    width="52"
+    height="24"
+    rx="4"
+    fill="#ffffffff"
+  />
+
+  <!-- Small indicators (server lights) -->
+  <circle cx="42" cy="80" r="4" fill="#ffffffff"/>
+  <circle cx="54" cy="80" r="4" fill="#ffffffff"/>
+  <circle cx="66" cy="80" r="4" fill="#ffffffff"/>
+
+  <!-- Power symbol (creation indicator) -->
+  <circle cx="64" cy="100" r="10" fill="#232F3E"/>
+  <path
+    d="M64 93v6M60 100a4 4 0 1 0 8 0 4 4 0 1 0 -8 0"
+    stroke="#ffffffff"
+    stroke-width="2"
+    fill="none"
+    stroke-linecap="round"
+  />
+</svg>

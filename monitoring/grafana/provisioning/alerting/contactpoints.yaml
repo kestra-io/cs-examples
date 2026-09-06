@@ -1,0 +1,21 @@
+apiVersion: 1
+
+contactPoints:
+  - orgId: 1
+    name: slack-kestra-alerts
+    receivers:
+      - uid: slack-kestra-webhook
+        type: slack
+        settings:
+          url: $__env{SLACK_WEBHOOK_URL}
+          title: '{{ template "kestra_alert_title" . }}'
+          text: '{{ template "kestra_alert_message" . }}'
+        disableResolveMessage: false
+      - uid: kestra-flow-webhook
+        type: webhook
+        settings:
+          url: http://kestra-webserver:8080/api/v1/solutions/executions/webhook/solutions.alerting/grafana_alert_webhook/287b87930f0ce2d2f76864b3e247d324
+          httpMethod: POST
+          title: '{{ template "kestra_alert_title" . }}'
+          message: '{{ template "kestra_alert_message" . }}'
+        disableResolveMessage: false

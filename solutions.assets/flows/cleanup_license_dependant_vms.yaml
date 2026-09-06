@@ -1,0 +1,39 @@
+id: cleanup_license_dependant_vms
+namespace: company.team
+
+triggers:
+  - id: onLicenseDeletion
+    type: io.kestra.plugin.core.trigger.Flow
+    inputs:
+      license: "{{ trigger.outputs.licenseId }}"
+    preconditions:
+      id: flows
+      flows:
+        - namespace: company.team
+          flowId: delete_license
+          states: [SUCCESS]
+  - id: webhook
+    type: io.kestra.plugin.core.trigger.Webhook
+    key: "dynatrace-webhook"
+
+inputs:
+  - id: license
+    type: SELECT
+    expression: "{{ assets(type = 'io.kestra.plugin.ee.assets.VM.License') | jq('.[].id') }}"
+
+tasks:
+  - id: hello
+    type: io.kestra.plugin.kestra.ee.assets.PurgeAssets
+    allowFailure: true
+    endDate: "{{ now() | dateAdd(-90, 'DAYS') }}"
+    assetType:
+      - io.kestra.plugin.ee.assets.VM
+    metadataQuery:
+      - field: licenseId
+        type: EQUAL_TO
+        value: "{{ inputs.license }}"
+
+
+labels:
+  - key: feature
+    value: assets

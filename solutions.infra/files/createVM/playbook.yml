@@ -1,0 +1,19 @@
+---
+- name: Run PowerShell Script on Windows
+  hosts: windows_vms
+  gather_facts: no
+  tasks:
+    - name: Execute Reverse Zone Creation Script
+      ansible.windows.win_shell: |
+        $ZoneName = "{{ (kv('dcConfig').subnetCIDR | split('\.'))[1] }}.{{ (kv('dcConfig').subnetCIDR | split('\.'))[0] }}.in-addr.arpa"
+        try {
+            # Register the Ubuntu Client in DNS (A-Record)
+            Add-DnsServerResourceRecordA -Name "{{ inputs.vmName }}" -ZoneName "{{ kv('dcConfig').domainName }}" -IPv4Address "{{ inputs.ipAddress }}" -CreatePtr
+        } catch {
+            Write-Error "Adding Reverse Zone DNS Entry Failed. Error: $_"
+        }
+      register: dns_script_output
+
+    - name: Print PowerShell Output to Kestra Logs
+      debug:
+        var: dns_script_output.stdout_lines

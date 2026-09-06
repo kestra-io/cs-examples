@@ -1,0 +1,272 @@
+id: createVM
+namespace: solutions.infra
+
+labels:
+  - key: "domain"
+    value: "infra"
+  - key: "maintainer"
+    value: "caxe"
+  - key: "kestra.version"
+    value: "1.0.8"
+  - key: "feature"
+    value: "terraform"
+
+variables:
+  vmProps:
+    {
+      "Cloud": "{{ inputs.cloudProvider }}",
+      "Account": "{{ inputs.billingAccount }}",
+      "Region": "{{ inputs.region }}",
+      "Zone": "{{ inputs.zone }}",
+      "Network": "{{ inputs.network }}",
+      "Subnet": "{{ inputs.subnet }}",
+      "Size": "{{ inputs.vmSize }}",
+      "OS": "{{ inputs.os }}",
+      "OS Version": "{{ inputs.osFlavor }}",
+      "Environment": "{{ inputs.env }}",
+      "VM Type": "{{ inputs.vmType }}",
+      "AD Integration": "{{ inputs.addToAD }}",
+      "BaselineApps": "{{ inputs.baselineApps }}",
+      "IP Address": "{{ outputs.getIPAddress['vars']['ipAddress'] }}",
+    }
+
+inputs:
+  - id: cloudProvider
+    displayName: Cloud Provider
+    type: SELECT
+    values:
+      - AWS
+      - GCP
+      - Azure
+      - VCF
+    defaults: GCP
+
+  - id: billingAccount
+    type: SELECT
+    displayName: Billing Account
+    description: |
+      This is typically your 
+      Account ID for AWS
+      Project ID for GCP
+      Subscription ID for Azure
+    values:
+      - "kestra-sandbox"
+      - "kestra-dev"
+    defaults: "kestra-sandbox"
+    dependsOn:
+      inputs:
+        - cloudProvider
+      condition: "{{ inputs.cloudProvider == 'GCP' }}"
+
+  - id: region
+    type: SELECT
+    displayName: Region
+    values:
+      - "us-central1"
+      - "us-east1"
+    dependsOn:
+      inputs:
+        - billingAccount
+      condition: "{{ inputs.billingAccount == 'kestra-sandbox' }}"
+    defaults: "us-central1"
+
+  - id: zone
+    type: SELECT
+    displayName: Zone
+    values:
+      - "us-central1-a"
+      - "us-central1-b"
+    dependsOn:
+      inputs:
+        - region
+      condition: "{{ inputs.region == 'us-central1' }}"
+    defaults: "us-central1-a"
+
+  - id: os
+    displayName: Operating System
+    type: SELECT
+    values:
+      - "Windows"
+      - "Linux"
+    defaults: "Linux"
+
+  - id: osFlavor
+    displayName: OS Version
+    type: SELECT
+    values:
+      - Ubuntu 24.04
+      - Ubuntu 20.04
+      - ubuntu-minimal-2210-kinetic-amd64-v20230126
+    defaults: ubuntu-minimal-2210-kinetic-amd64-v20230126
+    dependsOn:
+      inputs:
+        - os
+      condition: "{{ inputs.os == 'Linux' }}"
+
+  - id: vmSize
+    displayName: VM Size
+    type: SELECT
+    values:
+      - Small
+      - Medium
+      - Large
+      - n1-standard-1
+    description: |
+      Small   - 2 vCPUs 4 GB RAM
+      Medium  - 4 vCPUs 8 GB RAM
+      Large   - 8 vCPUs 16 GB RAM
+    defaults: n1-standard-1
+
+  - id: network
+    displayName: Network
+    type: SELECT
+    values:
+      - pg-gcp-demo-vpc
+      - vpc-02
+    defaults: pg-gcp-demo-vpc
+
+  - id: subnet
+    displayName: Subnet
+    type: SELECT
+    values:
+      - pg-gcp-demo-vpc
+      - subnet-02
+    defaults: pg-gcp-demo-vpc
+
+  - id: addToAD
+    type: BOOL
+    displayName: Add to Active Directory
+    defaults: true
+
+  - id: vmType
+    type: SELECT
+    displayName: Type of VM
+    values:
+      - Application
+      - Database
+      - Server
+    defaults: Application
+
+  - id: env
+    type: SELECT
+    displayName: Environment
+    values:
+      - Development
+      - Staging
+      - Production
+    defaults: Development
+
+  - id: baselineApps
+    displayName: Baseline Applications to Install
+    type: MULTISELECT
+    values:
+      - sysstat
+      - httpd
+    defaults:
+      - sysstat
+      - httpd
+
+tasks:
+  - id: requestApproval
+    type: io.kestra.plugin.slack.notifications.SlackIncomingWebhook
+    url: "{{ secret(namespace='system', key='SLACK_WEBHOOK') }}"
+
+    messageText: |
+      A VM Order has been placed by {{ printContext().labels.system.username ?? 'TestUser' }}
+
+      **Monthly Estimate**: **189$**
+
+      Approve/Reject: [Here]({{ appLink() }}&flowInputs={{ inputs | toJson | base64encode }}&requestor={{ printContext().labels.system.username ?? 'Test User' | base64encode }})
+
+  - id: waitForApproval
+    type: io.kestra.plugin.core.flow.Pause
+    onResume:
+      - id: approved
+        description: Whether to approve the request
+        type: BOOL
+        defaults: false
+      - id: reason
+        description: Reason for approval or rejection
+        type: STRING
+        defaults: Auto Reject
+
+  - id: proceedIfApproved
+    type: io.kestra.plugin.core.flow.If
+    condition: "{{ outputs.waitForApproval.onResume.approved == false }}"
+    then:
+      - id: isRejected
+        type: io.kestra.plugin.core.execution.Fail
+        errorMessage: "Request was not Approved. Reason: {{ outputs.waitForApproval.onResume.reason }}"
+    else:
+      - id: generateCustomHostname
+        type: io.kestra.plugin.core.flow.Subflow
+        namespace: "{{ flow.namespace }}"
+        flowId: generateCustomHostname
+        inputs:
+          cloudProvider: "{{ inputs.cloudProvider }}"
+          env: "{{ inputs.env }}"
+          vmType: "{{ inputs.vmType }}"
+          os: "{{ inputs.os }}"
+        wait: true
+        transmitFailed: true
+        allowWarning: true
+
+      - id: getIPAddress
+        type: io.kestra.plugin.scripts.python.Script
+        beforeCommands:
+          - pip install requests kestra
+        script: |
+          from kestra import Kestra
+          import requests
+
+          IPAM_BASE_URL = "{{ kv('ipamAddress') }}/api/dev-ipam"
+          endpoint = f"subnets/{{inputs.subnet}}/first_free"
+
+          # response = requests.get(f'{IPAM_BASE_URL}/{endpoint}', verify=False)
+          # print(response.status_code)
+          # ip_address = response.json().get("ipAddress")
+          # Kestra.outputs({'status': response.status_code, 'ipAddress': ip_address})
+          ip_address = "10.128.10.{{ outputs['generateCustomHostname'].outputs['nextAvailableIndex'] }}"
+          Kestra.outputs({'status': "200", 'ipAddress': ip_address})
+
+      - id: createVM
+        type: io.kestra.plugin.terraform.cli.TerraformCLI
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: gcp-svc-account.json
+        inputFiles:
+          main.tf: "{{ render(read('createVM/main.tf')) }}"
+          gcp-svc-account.json: "{{ secret('GCP_SVC_ACCOUNT') }}"
+        beforeCommands:
+          - terraform init
+        commands:
+          - terraform plan
+          - terraform apply -auto-approve -json
+          - terraform output -raw external_ip > external_ip.txt
+        allowFailure: false
+        outputFiles:
+          - "*.txt"
+
+      - id: updateInventory
+        type: io.kestra.plugin.core.flow.Subflow
+        namespace: "{{ flow.namespace }}"
+        flowId: updateInventory
+        inputs:
+          hostname: "{{ outputs['generateCustomHostname'].outputs['hostname'] }}"
+          vmProps: "{{ render(vars.vmProps) }}"
+          cloudProvider: "{{ inputs.cloudProvider }}"
+        wait: true
+        transmitFailed: true
+
+      - id: notifyChannel
+        type: io.kestra.plugin.slack.notifications.SlackIncomingWebhook
+        url: "{{ secret(namespace='system', key='SLACK_WEBHOOK') }}"
+
+        messageText: |
+          {
+            "text": "{{ outputs['generateCustomHostname'].outputs['hostname'] }} created successfully with the following properties\n ExternalIPAddress: {{ read(outputs.createVM.outputFiles['external_ip.txt']) }}\n DefaultUser: {{ secret('SSH_VM_USER') }}\n Cloud: {{ inputs.cloudProvider }}\n Account: {{ inputs.billingAccount }}\n Region: {{ inputs.region }}\n Zone: {{ inputs.zone }}\n Network: {{ inputs.network }}\n Subnet: {{ inputs.subnet }}\n Size: {{ inputs.vmSize }}\n OS: {{ inputs.os }}\n Version: {{ inputs.osFlavor }}\n Environment: {{ inputs.env }}\n VMType: {{ inputs.vmType }}\n ADIntegration: {{ inputs.addToAD }}\n BaselineApps: {{ inputs.baselineApps | join(', ') }}\n IPAddress: {{ outputs.getIPAddress['vars']['ipAddress'] }}\n"
+          }
+
+outputs:
+  - id: externalIPAddress
+    type: STRING
+    value: "{{ read(outputs.createVM.outputFiles['external_ip.txt']) ?? 'Failed' }}"

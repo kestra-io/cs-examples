@@ -1,0 +1,109 @@
+id: infra_upgrade_servers
+namespace: solutions.assets
+
+labels:
+  maintainer: "parham"
+  assets: feature
+  infra: feature
+  provisioning: feature
+
+inputs:
+  - id: target_version
+    type: STRING
+    defaults: "3.11"
+  - id: env
+    type: SELECT
+    values:
+      - staging
+      - prod
+    defaults: staging
+
+tasks:
+  - id: query_assets
+    type: io.kestra.plugin.core.debug.Return
+    format: >
+      {{ 
+        assets(metadata={"env": inputs.env, "os": "debian"})
+        | jq('map(select(.metadata.python_version != "' + inputs.target_version + '" ))') 
+        | first
+      }}
+
+  - id: run_upgrades
+    type: io.kestra.plugin.core.flow.ForEach
+    values: "{{ outputs.query_assets.value }}"
+    tasks:
+      - id: get_server_details
+        type: io.kestra.plugin.core.execution.SetVariables
+        variables:
+          server_id: "{{ fromJson(taskrun.value).id }}"
+          server_ip: "{{ fromJson(taskrun.value).metadata.ip_address }}"
+          python_version: "{{ fromJson(taskrun.value).metadata.python_version }}"
+          server_env: "{{ fromJson(taskrun.value).metadata.env }}"
+          server_os: "{{ fromJson(taskrun.value).metadata.os }}"
+
+      - id: ssh_python_update
+        type: io.kestra.plugin.scripts.shell.Commands
+        commands:
+          - echo "Connecting to {{vars.server_id}} @ [{{vars.server_ip}}]..."
+          - echo "Updating Python from {{ vars.python_version }} to {{ inputs.target_version }}"
+        assets:
+          inputs:
+            - id: "{{ vars.server_id }}"
+          outputs:
+            - id: "{{ vars.server_id }}"
+              type: io.kestra.plugin.ee.assets.VM
+              namespace: "{{flow.namespace}}"
+              metadata:
+                ip_address: "{{vars.server_ip}}"
+                python_version: "{{inputs.target_version}}"
+                env: "{{vars.server_env}}"
+                os: "{{vars.server_os}}"
+
+  - id: log_upgrades
+    type: io.kestra.plugin.core.log.Log
+    message: "Successfully upgraded {{vars.server_id}}"
+
+  - id: export_assets_to_file
+    type: io.kestra.plugin.ee.assets.AssetShipper
+    assetExporters:
+      - id: file_exporter
+        type: io.kestra.plugin.ee.assets.FileAssetExporter
+        format: JSON
+  
+  # - id: export_assets_to_openlineage
+  #   type: io.kestra.plugin.ee.assets.AssetShipper
+  #   assetExporters:
+  #     - id: openlineage_exporter
+  #       type: io.kestra.plugin.ee.openlineage.OpenLineageAssetExporter
+  #       uri: http://host.docker.internal:5000
+  #       mappings:
+  #         io.kestra.plugin.ee.assets.Table:
+  #           namespace: "{{ flow.namespace }}"
+  
+errors:
+  - id: analyze_error
+    type: io.kestra.plugin.ai.agent.AIAgent
+    provider:
+      type: io.kestra.plugin.ai.provider.GoogleGemini
+      modelName: gemini-2.5-flash
+      apiKey: "{{ secret('gemini_api_key') }}"
+    systemMessage: |
+      You are a support engineer with expertise in Infra Automation and Kestra orchestration.
+      Please analyze the following error and provide detailed cause and resolve analysis with 
+      concrete steps.
+    prompt: |
+      Analyze this error
+      {{errorLogs()}}
+  - id: log_solution
+    type: io.kestra.plugin.core.log.Log
+    message: "{{outputs.analyze_error.textOutput}}"
+
+triggers:
+  - id: webhook
+    type: io.kestra.plugin.core.trigger.Webhook
+    key: "{{secret('YOUR_WEBHOOK_TOKEN')}}"
+    
+  - id: every_sunday_morning
+    type: io.kestra.plugin.core.trigger.Schedule
+    cron: "0 9 * * 0"
+    disabled: true

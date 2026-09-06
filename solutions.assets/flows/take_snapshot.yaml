@@ -1,0 +1,24 @@
+id: take_snapshot
+namespace: company.team
+labels:
+  - key: feature
+    value: assets
+inputs:
+  - id: target_vm
+    type: STRING
+    defaults: "windows-web-01"
+
+tasks:
+  - id: gcp_snapshot
+    type: io.kestra.plugin.core.log.Log
+    message: "backup-{{ inputs.target_vm }}-{{ execution.startDate }}"
+    assets:
+      inputs:
+        - id: "{{ inputs.target_vm | slugify }}"
+      outputs:
+        - id: "{{ ('snapshot-' ~ inputs.target_vm ~ '-' ~  execution.id) | slugify  }}"
+          type: io.kestra.plugin.ee.assets.VM.Snapshot
+          metadata:
+            retention: "30days"
+            trigger: "manual-backup"
+            vm: "{{ inputs.target_vm }}"

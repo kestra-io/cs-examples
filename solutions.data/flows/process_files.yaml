@@ -1,0 +1,104 @@
+id: process_files
+namespace: solutions.data
+labels:
+  - key: "maintainer"
+    value: "paul"
+pluginDefaults:
+  - forced: false
+    type: io.kestra.plugin.jdbc.postgresql
+    values:
+      url: "{{secret('JDBC_CONNECTION_STRING')}}"
+      username: "{{secret('PG_USERNAME')}}"
+      password: "{{secret('PG_PASSWORD')}}"    
+
+triggers:
+  - id: daily
+    type: io.kestra.plugin.core.trigger.Schedule
+    cron: "@daily"
+    timezone: Europe/Paris
+
+errors:
+  - id: send_stack_trace
+    type: io.kestra.plugin.slack.notifications.SlackIncomingWebhook
+    url: "{{secret(namespace='system',key='SLACK_WEBHOOK')}}"
+    payload: |
+      {
+         "text": "flow {{flow.id}} failed {{errorLogs()}}"
+      }
+
+inputs:
+  - id: uri
+    type: STRING
+    defaults: https://api.oireachtas.ie/v1/members
+
+tasks:
+  - id: parallel
+    type: io.kestra.plugin.core.flow.Parallel
+    tasks:
+      - id: get_s3_file
+        type: io.kestra.plugin.aws.s3.Download
+        bucket: my-bucket
+        key: "path/to/file"
+        disabled: true
+      - id: call_api
+        type: io.kestra.plugin.core.http.Request
+        uri: "{{inputs.uri}}"
+        method: GET
+  - id: csv
+    type: io.kestra.plugin.scripts.shell.Commands
+    beforeCommands:
+      - apt update
+      - apt install -y jq
+    allowWarning: true
+    inputFiles: 
+      members.json: "{{ outputs.call_api.body }}"
+    outputFiles:
+      - members.csv
+    commands:
+      - cat members.json| jq -r '.results.[]| "\(.member.memberCode),\(.member.memberships[0].membership.parties[0].party.showAs)"' | sed '1d;$d' > members.csv
+  - id: load_to_pg
+    type: io.kestra.plugin.jdbc.postgresql.CopyIn
+    from: "{{outputs.csv.outputFiles['members.csv']}}"
+    format: CSV
+    header: false
+    table: house_members
+  - id: query
+    type: io.kestra.plugin.jdbc.postgresql.Query
+    sql: "select * from house_members"
+    fetchType: STORE
+  - id: batch
+    type: io.kestra.plugin.scripts.python.Script
+    disabled: true
+    containerImage: python:slim
+    inputFiles:
+      data.csv: "{{outputs.query.uri}}"
+    taskRunner:
+      type: io.kestra.plugin.ee.gcp.runner.Batch
+      resume: false
+      projectId: "{{namespace.gcpProjectId}}"
+      region: "{{namespace.gcpRegion}}"
+      serviceAccount: "{{secret(namespace='system',key='GCP_SVC_ACCOUNT')}}"
+      bucket: "demo-kestra-batch-runner"
+    script: |
+      print("hello")
+  - id: run_container
+    type: io.kestra.plugin.docker.Run
+    containerImage: hello-world
+  - id: slack
+    type: io.kestra.plugin.slack.notifications.SlackIncomingWebhook
+    url: "{{secret(namespace='system',key='SLACK_WEBHOOK')}}"
+    payload: |
+      {
+        "text": "the flow {{flow.namespace}}.{{flow.id}} has completed with {{execution.id}}"
+      }
+
+
+finally:
+  - id: clean_data
+    type: io.kestra.plugin.jdbc.postgresql.Query
+    sql: "DELETE FROM house_members"
+
+
+
+
+

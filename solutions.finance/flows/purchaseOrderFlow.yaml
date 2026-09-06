@@ -1,0 +1,75 @@
+id: purchaseOrderFlow
+namespace: solutions.finance
+
+labels:
+  - key: "maintainer"
+    value: "caxe"
+  - key: "kestra.version"
+    value: "1.0.x"
+  - key: "domain"
+    value: "training"
+  - key: "feature"
+    value: "apps"
+  - key: "feature"
+    value: "unitTests"
+  - key: "feature"
+    value: "hitl"
+
+inputs:
+  - id: productId
+    type: STRING
+  - id: requestor
+    type: STRING
+  - id: department
+    type: STRING
+
+tasks:
+  - id: getProductDetails
+    type: io.kestra.plugin.core.http.Request
+    uri: "{{ 'https://dummyjson.com/products/' ~ (inputs.productId | trim) }}"
+
+  - id: appParams
+    type: io.kestra.plugin.core.output.OutputValues
+    values:
+      productName: "{{ fromJson(outputs.getProductDetails.body).title }}"
+      productPrice: "{{ fromJson(outputs.getProductDetails.body).price }}"
+      productImageLink: "{{ fromJson(outputs.getProductDetails.body).thumbnail }}"
+
+  - id: hitlProcess
+    type: io.kestra.plugin.core.flow.Sequential
+    tasks:
+      - id: sendApprovalNotification
+        type: io.kestra.plugin.core.log.Log
+        message: |
+          Invoice for {{ outputs.appParams.values.productName }} requested by {{ inputs.requestor }} has been received for your approval.
+
+          Please approve the Purchasing Order
+          Approve: {{ appLink() }}&flowInputs={{ inputs | toJson | base64encode }}&appParams={{ outputs.appParams.values | toJson | base64encode }}
+
+      - id: notifyChannel
+        type: io.kestra.plugin.slack.notifications.SlackIncomingWebhook
+        url: "{{ secret(namespace='system', key='SLACK_WEBHOOK') }}"
+
+        messageText: |
+          Invoice for {{ outputs.appParams.values.productName }} requested by {{ inputs.requestor }} has been received for your approval.
+
+          Please approve the Purchasing Order
+          Approve/Reject: [Here]({{ appLink() }}&flowInputs={{ inputs | toJson | base64encode }}&appParams={{ outputs.appParams.values | toJson | base64encode }})
+
+      - id: waitForApproval
+        type: io.kestra.plugin.core.flow.Pause
+        onResume:
+          - id: approved
+            type: BOOLEAN
+            displayName: Approve this request?
+          - id: reason
+            type: STRING
+            displayName: Decision notes
+
+outputs:
+  - id: managerApproved
+    type: BOOL
+    value: "{{ outputs.waitForApproval.onResume.approved }}"
+  - id: managerComments
+    type: STRING
+    value: "{{ outputs.waitForApproval.onResume.reason }}"

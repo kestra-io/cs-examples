@@ -1,0 +1,142 @@
+id: generateCustomHostname
+namespace: solutions.infra
+
+labels:
+  - key: "maintainer"
+    value: "caxe"
+  - key: "kestra.version"
+    value: "1.0.8"
+  - key: "domain"
+    value: "infra"
+
+inputs:
+  - id: cloudProvider
+    displayName: Cloud Provider
+    type: SELECT
+    values:
+      - AWS
+      - GCP
+      - Azure
+      - VCF
+    defaults: GCP
+  - id: os
+    displayName: Operating System
+    type: SELECT
+    values:
+      - "Windows"
+      - "Linux"
+    defaults: "Linux"
+  - id: vmType
+    type: SELECT
+    displayName: Type of VM
+    values:
+      - Application
+      - Database
+      - Server
+    defaults: Application
+  - id: env
+    type: SELECT
+    displayName: Environment
+    values:
+      - Development
+      - Staging
+      - Production
+    defaults: Development
+
+tasks:
+  - id: getCustomHostname
+    type: io.kestra.plugin.core.flow.Sequential
+    description: |
+      Assuming naming convention as
+      <AWS | GCP | AZR | VCF> Three letters for cloud
+      <DEV | STG | PRD> Three letters for Env
+      <LNX | WIN> Three Letters for OS
+      <AP | DB | SV> Two letters for VM Type
+      <INDEX 1 - 99>
+    tasks:
+      - id: getHostnameIndexKey
+        type: io.kestra.plugin.scripts.python.Script
+        namespaceFiles:
+          enabled: true
+        beforeCommands:
+          - pip install kestra
+        script: |
+          from kestra import Kestra
+
+          CLOUD_MAP = {
+              "AWS": "AWS",
+              "GCP": "GCP",
+              "Azure": "AZR",
+              "VCF": "VCF"
+          }
+
+          ENV_MAP = {
+              "Development": "DEV",
+              "Staging": "STG",
+              "Production": "PRD"
+          }
+
+          OS_MAP = {
+              "Linux": "LNX",
+              "Windows": "WIN"
+          }
+
+          VM_TYPE_MAP = {
+              "Application": "AP",
+              "Database": "DB",
+              "Server": "SV"
+          }
+
+          hostname_index_key = f"{CLOUD_MAP['{{ inputs.cloudProvider }}']}.{ENV_MAP['{{ inputs.env }}']}.{OS_MAP['{{ inputs.os }}']}.{VM_TYPE_MAP['{{ inputs.vmType }}']}"
+
+          Kestra.outputs({'hostname_index_key': hostname_index_key})
+
+      - id: getNextAvailableIndex
+        type: io.kestra.plugin.core.kv.Get
+        errorOnMissing: false
+        key: "{{ outputs.getHostnameIndexKey.vars.hostname_index_key }}"
+
+      - id: generateCustomHostname
+        type: io.kestra.plugin.scripts.python.Script
+        beforeCommands:
+          - pip install kestra
+        script: |
+          from kestra import Kestra
+
+          try:
+            index_key = "{{ outputs.getHostnameIndexKey.vars.hostname_index_key }}"
+            index_keys = index_key.split(".")
+            cloud_code = index_keys[0]
+            env_code = index_keys[1]
+            os_code = index_keys[2]
+            vm_code = index_keys[3]
+            next_index = {{ outputs.getNextAvailableIndex.value ?? 1 }}
+
+            if not (1 <= next_index <= 99):
+              raise ValueError("Index must be between 1 and 99.")
+
+            index_code = f"{next_index:02d}"  # pad with leading zero if needed
+            vm_name = f"{cloud_code}{env_code}{os_code}{vm_code}{index_code}"
+
+            Kestra.outputs({'customHostname': vm_name.lower()})
+
+          except KeyError as e:
+              print(f"Invalid value for input: {e}")
+          except Exception as e:
+              print(str(e))
+
+      - id: incrementindex
+        type: io.kestra.plugin.core.kv.Set
+        key: "{{ outputs.getHostnameIndexKey.vars.hostname_index_key }}"
+        kvType: NUMBER
+        value: "{{ (outputs.getNextAvailableIndex.value ?? 1) + 1 }}" # increment
+        allowFailure: true
+
+outputs:
+  - id: hostname
+    type: STRING
+    value: '{{ outputs.generateCustomHostname["vars"]["customHostname"] }}'
+
+  - id: nextAvailableIndex
+    type: STRING
+    value: "{{ outputs.getNextAvailableIndex.value ?? 1 }}"

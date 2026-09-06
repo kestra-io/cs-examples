@@ -1,0 +1,117 @@
+id: patchVM
+namespace: solutions.infra
+description: |
+  Before and after Ptaching, cehck updates available with `apt list --upgradable`
+
+inputs:
+  - id: vmType
+    type: SELECT
+    values:
+      - uat
+      - prod
+    defaults: uat
+  - id: vmName
+    type: STRING
+    defaults: dummy-uat
+  - id: patchId
+    type: STRING
+    defaults: "apt/focal-updates 2.0.11 amd64 [upgradable from: 2.0.10]"
+
+tasks:
+  - id: takeSnapshot
+    type: io.kestra.plugin.core.log.Log
+    message: Taking Snapshot! 🚀
+  - id: patchVM
+    type: io.kestra.plugin.fs.ssh.Command
+    host: "{{ inputs.vmName }}"
+    port: "22"
+    authMethod: PASSWORD
+    username: root
+    password: "{{ secret('UBUNTU_PW') }}"
+    commands:
+      - apt update
+      - apt install -y {{ (inputs.patchId | split("/"))[0] }}
+  - id: checkSuccess
+    type: io.kestra.plugin.core.flow.If
+    condition: "{{ outputs.patchVM.exitCode == 0 }}"
+    then:
+      - id: sendApprovalNotification
+        type: io.kestra.plugin.core.log.Log
+        message: |
+          Patch: **{{ inputs.patchId }}** has been succesfully applied on {{ inputs.vmType | upper  }} VM: **{{ inputs.vmName }}**. 
+
+          Please validate and approve the patch {% if inputs.vmType == 'uat'%}to production VM {% endif %}or rollback.
+
+      - id: notifyChannel
+        type: io.kestra.plugin.slack.notifications.SlackIncomingWebhook
+        url: "{{ secret(key='SLACK_WEBHOOK',namespace='system') }}"
+        messageText: |
+          Patch: **{{ inputs.patchId }}** has been succesfully applied on {{ inputs.vmType | upper  }} VM: **{{ inputs.vmName }}**. 
+
+          Please validate and approve the patch {% if inputs.vmType == 'uat'%}to production VM {% endif %}or rollback.
+          Approve/Reject: [Here]({{ appLink() }})
+
+      - id: waitForApproval
+        type: io.kestra.plugin.core.flow.Pause
+        onResume:
+          - id: approvePatch
+            description: Whether to approve the patch
+            type: BOOL
+            defaults: false
+          - id: reason
+            description: Reason for approval or rejection
+            type: STRING
+  - id: rollBackIfRequired
+    type: io.kestra.plugin.core.flow.If
+    condition: "{{ outputs.patchVM.exitCode != 0 or outputs.waitForApproval.onResume.approvePatch == false }}"
+    then:
+      - id: rollBackVM
+        type: io.kestra.plugin.fs.ssh.Command
+        host: "{{ inputs.vmName }}"
+        port: "22"
+        authMethod: PASSWORD
+        username: root
+        password: "{{ secret('UBUNTU_PW') }}"
+        commands:
+          - apt update
+          - "apt install -y {{ (inputs.patchId | split('/'))[0] }}={{ ((inputs.patchId | split('from: '))[1] | split(']'))[0] }}"
+  - id: patchState
+    type: io.kestra.plugin.core.output.OutputValues
+    values:
+      state: "{{ (outputs.patchVM.exitCode == 0 and outputs.waitForApproval.onResume.approvePatch == true) ? 'SUCCESS' : 'FAILED' }}"
+      reason: "{{ outputs.patchVM.exitCode != 0 ? 'Patch failed' : outputs.waitForApproval.onResume.reason }}"
+  - id: rollBackState
+    type: io.kestra.plugin.core.output.OutputValues
+    runIf: "{{ outputs.rollBackIfRequired.evaluationResult == true }}"
+    values:
+      state: "{{ outputs.rollBackVM.values.exitCode == 0 ? 'SUCCESS' : 'FAILED' }}"
+      reason: "{{ outputs.rollBackVM.values.exitCode != 0 ? 'Rollback failed' : 'Rollback Success' }}"
+
+outputs:
+  - id: actionPerformed
+    type: STRING
+    value: "{{ outputs.rollBackIfRequired.evaluationResult == true ? 'ROLLBACK' : 'PATCH' }}"
+  - id: actionState
+    type: STRING
+    value: "{{ outputs.rollBackIfRequired.evaluationResult == true ? outputs.rollBackState.values.state : outputs.patchState.values.state }}"
+  - id: stateReason
+    type: STRING
+    value: "{{ outputs.rollBackIfRequired.evaluationResult == true ? outputs.rollBackState.values.reason : outputs.patchState.values.reason }}"
+  - id: actionCause
+    type: STRING
+    value: "{{ outputs.waitForApproval.onResume.reason ?? 'Patching Failed. Not went for approval.' }}"
+  - id: vmName
+    type: STRING
+    value: "{{ inputs.vmName }}"
+
+labels:
+  - key: feature
+    value: app
+  - key: feature
+    value: ssh
+  - key: domain
+    value: infra
+  - key: maintainer
+    value: caxe
+  - key: kestra.version
+    value: 1.0.8

@@ -1,0 +1,40 @@
+id: solutions_infra_patchOrchestration
+type: io.kestra.plugin.ee.apps.Execution
+namespace: solutions.infra
+displayName: Patch Orchestration
+thumbnail: nsFile:///patchOrchestration/icon.svg
+flowId: patchOrchestration
+
+access:
+  type: PRIVATE
+
+layout:
+  - on: OPEN
+    blocks:
+      - type: io.kestra.plugin.ee.apps.core.blocks.Markdown
+        content: |
+          ## Execute Flow
+      - type: io.kestra.plugin.ee.apps.execution.blocks.CreateExecutionForm
+      - type: io.kestra.plugin.ee.apps.execution.blocks.CreateExecutionButton
+        text: Submit
+  - on: RUNNING
+    blocks:
+      - type: io.kestra.plugin.ee.apps.core.blocks.Markdown
+        content: |
+          ## Execution is in progress.
+      - type: io.kestra.plugin.ee.apps.core.blocks.Loading
+      - type: io.kestra.plugin.ee.apps.execution.blocks.Logs
+      - type: io.kestra.plugin.ee.apps.execution.blocks.CancelExecutionButton
+        text: Cancel request
+  - on: SUCCESS
+    blocks:
+      - type: io.kestra.plugin.ee.apps.core.blocks.Markdown
+        content: |
+          ### VM Patch Orchestration
+      - type: io.kestra.plugin.ee.apps.core.blocks.Alert
+        style: INFO
+        showIcon: true
+        content: Your execution result
+      - type: io.kestra.plugin.ee.apps.core.blocks.Markdown
+        content: |
+          {{ printContext().execution.outputs.result }}
