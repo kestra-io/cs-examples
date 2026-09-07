@@ -98,6 +98,13 @@ common:
     #      target:
     #        type: AverageValue
     #        averageValue: 100Mi
+    # - type: External
+    #   external:
+    #     metric:
+    #       name: kestra_worker_job_pending
+    #     target:
+    #       type: AverageValue
+    #       averageValue: "5" # The autoscaler will try to maintain an average of 5 pending jobs per pod.
   livenessProbe:                      # container health check -- targets the `management` port (see service.ports below)
     httpGet:
       path: /health/liveness
