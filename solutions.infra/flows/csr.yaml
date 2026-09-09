@@ -80,10 +80,8 @@ triggers:
     disabled: true
     inputs:
       ipAddress: "{{ trigger.outputs.externalIPAddress }}"
-    preconditions:
-      id: vmCreationSuccess
-      flows:
-        - namespace: solutions.infra
-          flowId: createVM
-          states: [SUCCESS, WARNING]
+    dependsOn:
+      - flowId: createVM
+        namespace: solutions.infra
+        states: [SUCCESS, WARNING]
 disabled: false
