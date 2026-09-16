@@ -1,0 +1,128 @@
+id: vm_fleet_inventory
+title: VM Fleet Inventory
+description: |
+  Live view of the Ansible-managed fleet, sourced from VM assets registered by
+  the ansible_inventory_to_assets flow. Assets ignore the dashboard time range,
+  so these charts always show current state rather than a window.
+
+charts:
+  - id: patch_status
+    type: io.kestra.plugin.core.dashboard.chart.Bar
+    chartOptions:
+      displayName: Patch status
+      column: patch_status
+      width: 6
+    data:
+      type: io.kestra.plugin.ee.dashboard.data.Assets
+      columns:
+        patch_status:
+          field: METADATA
+          key: patch_status
+          displayName: Patch status
+        total:
+          agg: COUNT
+          displayName: VMs
+      where:
+        - field: TYPE
+          type: EQUAL_TO
+          value: io.kestra.plugin.ee.assets.VM
+
+  - id: cert_status
+    type: io.kestra.plugin.core.dashboard.chart.Bar
+    chartOptions:
+      displayName: Certificate expiry
+      column: cert_status
+      width: 6
+    data:
+      type: io.kestra.plugin.ee.dashboard.data.Assets
+      columns:
+        cert_status:
+          field: METADATA
+          key: cert_status
+          displayName: Certificate status
+        total:
+          agg: COUNT
+          displayName: VMs
+      where:
+        - field: TYPE
+          type: EQUAL_TO
+          value: io.kestra.plugin.ee.assets.VM
+
+  - id: os_distribution
+    type: io.kestra.plugin.core.dashboard.chart.Pie
+    chartOptions:
+      displayName: OS distribution
+      colorByColumn: os
+      graphStyle: DONUT
+      width: 6
+    data:
+      type: io.kestra.plugin.ee.dashboard.data.Assets
+      columns:
+        os:
+          field: METADATA
+          key: os
+          displayName: OS
+        total:
+          agg: COUNT
+          displayName: VMs
+      where:
+        - field: TYPE
+          type: EQUAL_TO
+          value: io.kestra.plugin.ee.assets.VM
+
+  - id: cloud_distribution
+    type: io.kestra.plugin.core.dashboard.chart.Pie
+    chartOptions:
+      displayName: Cloud provider
+      colorByColumn: provider
+      graphStyle: DONUT
+      width: 6
+    data:
+      type: io.kestra.plugin.ee.dashboard.data.Assets
+      columns:
+        provider:
+          field: METADATA
+          key: provider
+          displayName: Provider
+        total:
+          agg: COUNT
+          displayName: VMs
+      where:
+        - field: TYPE
+          type: EQUAL_TO
+          value: io.kestra.plugin.ee.assets.VM
+
+  # Actionable list: anything already expired or inside 30 days.
+  - id: certs_needing_attention
+    type: io.kestra.plugin.core.dashboard.chart.Table
+    chartOptions:
+      displayName: Certificates expiring within 30 days
+      width: 12
+    data:
+      type: io.kestra.plugin.ee.dashboard.data.Assets
+      columns:
+        host:
+          field: ID
+          displayName: Host
+        provider:
+          field: METADATA
+          key: provider
+          displayName: Cloud
+        cert_expiry:
+          field: METADATA
+          key: cert_expiry
+          displayName: Expires
+        cert_days_remaining:
+          field: METADATA
+          key: cert_days_remaining
+          displayName: Days left
+      where:
+        - field: TYPE
+          type: EQUAL_TO
+          value: io.kestra.plugin.ee.assets.VM
+        - field: METADATA
+          key: cert_status
+          type: IN
+          values:
+            - expired
+            - expiring_30d

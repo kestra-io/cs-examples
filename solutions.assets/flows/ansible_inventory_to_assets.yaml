@@ -1,0 +1,108 @@
+id: ansible_inventory_to_assets
+namespace: company.infra
+description: |
+  Onboards an Ansible inventory into Kestra Assets. Each host becomes a VM asset
+  whose metadata carries the attributes you want to slice the fleet by.
+
+tasks:
+  # 1. Resolve the inventory with Ansible itself, so group_vars, host_vars and
+  #    any dynamic inventory plugin are all applied before we read it.
+  - id: resolve_inventory
+    type: io.kestra.plugin.ansible.cli.AnsibleCLI
+    containerImage: cytopia/ansible:latest-tools
+    taskRunner:
+      type: io.kestra.plugin.scripts.runner.docker.Docker
+      pullPolicy: IF_NOT_PRESENT
+    outputFiles:
+      - hosts.json
+    inputFiles:
+      inventory.yml: |
+        all:
+          children:
+            linux:
+              hosts:
+                web-prd-01: {ansible_host: 10.0.1.11, os_family: ubuntu, os_version: "22.04", cloud: aws,    region: eu-west-1,    state: running, patch_status: patched,  last_patched: "2026-09-02", cert_expiry: "2026-12-20"}
+                web-prd-02: {ansible_host: 10.0.1.12, os_family: ubuntu, os_version: "22.04", cloud: aws,    region: eu-west-1,    state: running, patch_status: pending,  last_patched: "2026-06-14", cert_expiry: "2026-10-05"}
+                api-prd-01: {ansible_host: 10.0.2.21, os_family: rhel,   os_version: "9.4",   cloud: aws,    region: us-east-1,    state: running, patch_status: patched,  last_patched: "2026-09-10", cert_expiry: "2027-03-01"}
+                api-prd-02: {ansible_host: 10.0.2.22, os_family: rhel,   os_version: "9.4",   cloud: azure,  region: westeurope,   state: running, patch_status: failed,   last_patched: "2026-04-01", cert_expiry: "2026-09-28"}
+                db-prd-01:  {ansible_host: 10.0.3.31, os_family: rhel,   os_version: "8.9",   cloud: azure,  region: westeurope,   state: running, patch_status: pending,  last_patched: "2026-07-22", cert_expiry: "2026-11-11"}
+                etl-prd-01: {ansible_host: 10.0.4.41, os_family: debian, os_version: "12",    cloud: gcp,    region: europe-west1, state: stopped, patch_status: patched,  last_patched: "2026-09-12", cert_expiry: "2027-06-30"}
+                bas-prd-01: {ansible_host: 10.0.5.51, os_family: debian, os_version: "12",    cloud: onprem, region: dc-frankfurt, state: running, patch_status: patched,  last_patched: "2026-08-29", cert_expiry: "2026-09-25"}
+            windows:
+              hosts:
+                win-prd-01: {ansible_host: 10.0.6.61, os_family: windows, os_version: "2022", cloud: azure,  region: northeurope,  state: running, patch_status: pending,  last_patched: "2026-05-30", cert_expiry: "2026-10-18"}
+                win-prd-02: {ansible_host: 10.0.6.62, os_family: windows, os_version: "2019", cloud: onprem, region: dc-frankfurt, state: running, patch_status: failed,   last_patched: "2026-03-11", cert_expiry: "2026-09-19"}
+      to_assets.py: |
+        import json, datetime
+
+        raw = json.load(open("raw.json"))
+        hostvars = raw.get("_meta", {}).get("hostvars", {})
+        today = datetime.date.today()
+        out = []
+
+        for host, v in hostvars.items():
+            expiry = v.get("cert_expiry")
+            days = None
+            bucket = "unknown"
+            if expiry:
+                days = (datetime.date.fromisoformat(expiry) - today).days
+                if days < 0:
+                    bucket = "expired"
+                elif days <= 30:
+                    bucket = "expiring_30d"
+                elif days <= 90:
+                    bucket = "expiring_90d"
+                else:
+                    bucket = "ok"
+            out.append({
+                "id": host,
+                "ip": v.get("ansible_host"),
+                "os_family": v.get("os_family"),
+                "os_version": v.get("os_version"),
+                "os": f'{v.get("os_family")} {v.get("os_version")}',
+                "cloud": v.get("cloud"),
+                "region": v.get("region"),
+                "state": v.get("state"),
+                "patch_status": v.get("patch_status"),
+                "last_patched": v.get("last_patched"),
+                "cert_expiry": expiry,
+                "cert_days_remaining": days,
+                "cert_status": bucket,
+            })
+
+        json.dump(out, open("hosts.json", "w"))
+        print(f"prepared {len(out)} hosts")
+    commands:
+      # Must be ONE entry: AnsibleCLI runs each command in its own container with a
+      # fresh volume, so raw.json would not survive into a second entry.
+      - ansible-inventory -i inventory.yml --list > raw.json && python3 to_assets.py
+
+  # 2. One VM asset per host. Set is an upsert, so re-running refreshes metadata
+  #    in place rather than creating duplicates.
+  - id: register_assets
+    type: io.kestra.plugin.core.flow.Loop
+    values: "{{ read(outputs.resolve_inventory.outputFiles['hosts.json']) }}"
+    tasks:
+      - id: upsert
+        type: io.kestra.plugin.kestra.ee.assets.Set
+        # Required on containerised deployments: the task runs in the worker, where
+        # kestra.url (a browser-facing URL) is not reachable. Use the internal address.
+        kestraUrl: http://kestra-webserver:8080
+        assetId: "{{ fromJson(item.value).id }}"
+        assetType: io.kestra.plugin.ee.assets.VM
+        namespace: company.infra
+        displayName: "{{ fromJson(item.value).id }}"
+        assetDescription: "Managed by Ansible. IP {{ fromJson(item.value).ip }}."
+        auth:
+          apiToken: "{{ secret('KESTRA_API_TOKEN') }}"
+        metadata:
+          provider: "{{ fromJson(item.value).cloud }}"
+          region: "{{ fromJson(item.value).region }}"
+          state: "{{ fromJson(item.value).state }}"
+          os: "{{ fromJson(item.value).os }}"
+          os_family: "{{ fromJson(item.value).os_family }}"
+          patch_status: "{{ fromJson(item.value).patch_status }}"
+          last_patched: "{{ fromJson(item.value).last_patched }}"
+          cert_expiry: "{{ fromJson(item.value).cert_expiry }}"
+          cert_status: "{{ fromJson(item.value).cert_status }}"
+          cert_days_remaining: "{{ fromJson(item.value).cert_days_remaining }}"
