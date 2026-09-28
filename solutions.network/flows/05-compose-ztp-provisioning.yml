@@ -52,7 +52,7 @@ inputs:
     description: "ServiceNow change ticket reference (e.g. CHG0042137)"
     defaults: "CHG0042137"
   - id: skip_approval
-    type: BOOLEAN
+    type: BOOL
     defaults: false
     description: "Bypass approval gate — only for automated overnight provisioning batches"
 

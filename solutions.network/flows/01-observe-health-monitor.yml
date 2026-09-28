@@ -17,7 +17,7 @@ labels:
 
 inputs:
   - id: dry_run
-    type: BOOLEAN
+    type: BOOL
     defaults: false
     description: "Simulate results without making real HTTP calls (safe for demo environments)"
 

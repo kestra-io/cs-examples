@@ -60,7 +60,7 @@ tasks:
         type: io.kestra.plugin.core.flow.Pause
         onResume:
           - id: approved
-            type: BOOLEAN
+            type: BOOL
             displayName: Approve this request?
           - id: reason
             type: STRING
