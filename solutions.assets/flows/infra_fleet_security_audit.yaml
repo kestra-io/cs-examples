@@ -66,7 +66,8 @@ tasks:
         tasks:
           - id: ssh_install
             type: io.kestra.plugin.scripts.shell.Commands
-            runner: PROCESS
+            taskRunner:
+              type: io.kestra.plugin.core.runner.Process
             commands:
               - echo "Connecting to {{ fromJson(item.value).id }} at {{ fromJson(item.value).metadata.ip_address }}..."
               - echo "Installing CrowdStrike Agent v2.4..."

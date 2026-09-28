@@ -42,7 +42,7 @@ tasks:
         directory: src
 
       - id: buildDockerImage
-        type: io.kestra.plugin.docker.Build
+        type: io.kestra.plugin.docker.cli.Build
         tags:
           - my-app-image:latest
         dockerfile: |

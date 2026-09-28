@@ -94,7 +94,7 @@ tasks:
         displayName: "{{ fromJson(item.value).id }}"
         assetDescription: "Managed by Ansible. IP {{ fromJson(item.value).ip }}."
         auth:
-          apiToken: "{{ secret('KESTRA_API_TOKEN') }}"
+          apiToken: "{{ secret(namespace='system', key='kestra-api-token') }}"
         metadata:
           provider: "{{ fromJson(item.value).cloud }}"
           region: "{{ fromJson(item.value).region }}"

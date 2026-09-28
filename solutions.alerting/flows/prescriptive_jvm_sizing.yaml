@@ -36,7 +36,10 @@ inputs:
     description: Multiplier applied to observed peak heap usage to get the recommended -Xmx.
   - id: toleranceBandPct
     type: FLOAT
-    defaults: 15.0
+    # 15, not 15.0: the server stores the default as a number and serialises it
+    # back without the trailing zero, so a `.0` literal never round-trips and
+    # Terraform replans the flow on every run.
+    defaults: 15
     description: How far (in %) the recommendation can drift from the current KV baseline before it's flagged as an adjustment, rather than noise.
 
 tasks:

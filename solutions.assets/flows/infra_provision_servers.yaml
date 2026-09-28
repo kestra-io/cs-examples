@@ -29,7 +29,8 @@ tasks:
 
       - id: terraform_apply
         type: io.kestra.plugin.scripts.shell.Commands
-        runner: PROCESS
+        taskRunner:
+          type: io.kestra.plugin.core.runner.Process
         commands:
           - echo "Provisioning {{ vars.server_id }} at {{ vars.server_ip }}..."
           - echo "Upgrading env={{ vars.server_env }} , python-version={{ vars.python_version }}"

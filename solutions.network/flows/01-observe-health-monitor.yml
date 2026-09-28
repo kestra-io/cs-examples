@@ -6,7 +6,7 @@ description: |
   Runs parallel reachability probes across all registered network zones every 5 minutes.
   Aggregates latency and availability into a structured health report consumed by dashboards.
 
-  **Demo:** Open the Execution topology view while this runs. You will see the EachParallel node
+  **Demo:** Open the Execution topology view while this runs. You will see the Loop node
   fan out to all 6 zones simultaneously — no sequential bottleneck.
   At scale (200 zones), parallel execution compresses 33 minutes down to the latency of
   the single slowest probe.
@@ -27,10 +27,12 @@ tasks:
     description: |
       **Why parallel?**
       Sequential probing of 6 zones at 5s/probe = 30 seconds per cycle.
-      EachParallel reduces this to the latency of the single slowest zone — typically <5s.
+      concurrencyLimit: 0 runs every zone at once, so a cycle costs the latency of the
+      single slowest zone, typically <5s. The default of 1 would serialise them.
 
       Each child execution is independent: a timeout in one zone does not block others.
-    value:
+    concurrencyLimit: 0
+    values:
       - '{"name":"emea-core-01","region":"EMEA","endpoint":"http://netbox-mock:8000/health","sla_ms":200}'
       - '{"name":"emea-edge-02","region":"EMEA","endpoint":"http://netbox-mock:8000/health","sla_ms":250}'
       - '{"name":"apac-hub-01","region":"APAC","endpoint":"http://netbox-mock:8000/health","sla_ms":350}'

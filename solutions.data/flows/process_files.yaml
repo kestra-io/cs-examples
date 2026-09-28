@@ -77,7 +77,7 @@ tasks:
     script: |
       print("hello")
   - id: run_container
-    type: io.kestra.plugin.docker.Run
+    type: io.kestra.plugin.docker.cli.Run
     containerImage: hello-world
   - id: slack
     type: io.kestra.plugin.slack.notifications.SlackIncomingWebhook

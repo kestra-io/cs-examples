@@ -53,8 +53,11 @@ tasks:
       sql: |
         insert into kestraDemoRaw(id,qty,val,created_at) values(?,?,?,?)
     - id: dbt
-      type: io.kestra.plugin.dbt.cli.Run
-      dbtPath: /usr/local/bin/dbt
+      # dbt.cli.Run is deprecated; DbtCLI replaces it. dbtPath is gone, the
+      # command carries the path instead, and `commands` is now required.
+      type: io.kestra.plugin.dbt.cli.DbtCLI
+      commands:
+        - /usr/local/bin/dbt run
       containerImage: ghcr.io/kestra-io/dbt-postgres
       namespaceFiles:
         enabled: true

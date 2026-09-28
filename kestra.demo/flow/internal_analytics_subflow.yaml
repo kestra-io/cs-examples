@@ -27,7 +27,7 @@ tasks:
         password: "{{ secret('GITHUB_TOKEN') }}"
 
       - id: build
-        type: io.kestra.plugin.docker.Build
+        type: io.kestra.plugin.docker.cli.Build
         tags:
           - py-data-app
         dockerfile: "Dockerfile"
