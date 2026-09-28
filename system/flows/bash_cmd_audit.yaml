@@ -36,10 +36,8 @@ triggers:
   
   - id: on_execution
     type: io.kestra.plugin.core.trigger.Flow
-    conditions:
-      - type: io.kestra.plugin.core.condition.ExecutionNamespace
-        namespace: kestra.demo
-        comparison: PREFIX
+    dependsOn:
+      - when: "{{ trigger.namespace startsWith 'kestra.demo' }}"
 
 
 tasks:

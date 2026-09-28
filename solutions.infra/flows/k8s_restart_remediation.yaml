@@ -77,7 +77,7 @@ tasks:
 
   # --- STEP 5: SUCCESS NOTIFICATION ---
   - id: notify_slack_success
-    type: io.kestra.plugin.slack.SlackIncomingWebhook
+    type: io.kestra.plugin.slack.notifications.SlackIncomingWebhook
     url: "{{ secret('SLACK_WEBHOOK_URL') }}"
     messageText: >
         **K8s Remediation Success** ✅

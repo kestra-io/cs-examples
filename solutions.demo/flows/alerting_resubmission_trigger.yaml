@@ -32,20 +32,12 @@ triggers:
   - id: listen
     type: io.kestra.plugin.core.trigger.Flow
     disabled: true
-    conditions:
-      - type: io.kestra.plugin.core.condition.ExecutionStatus
-        in:
+    dependsOn:
+      - flowId: alerting_error_handling
+        namespace: solutions.demo
+        labels:
+          implicit: false
+        when: "{{ trigger.namespace startsWith 'solutions.demo' }}"
+        states:
           - FAILED
           - WARNING
-
-      - type: io.kestra.plugin.core.condition.ExecutionNamespace
-        namespace: solutions.demo
-        prefix: true
-
-      - type: io.kestra.plugin.core.condition.ExecutionFlow
-        flowId: alerting_error_handling
-        namespace: solutions.demo
-
-      - type: io.kestra.plugin.core.condition.ExecutionLabels
-        labels: 
-          implicit: false
