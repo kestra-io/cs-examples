@@ -34,11 +34,9 @@ triggers:
   - id: on_flow_execution_in_namespace
     type: io.kestra.plugin.core.trigger.Flow
     disabled: true
-    preconditions:
-      id: filter_namespace
-      flows:
-        - namespace: solutions.github_integration
-          states: [CREATED, SUCCESS, FAILED]
+    dependsOn:
+      - namespace: solutions.github_integration
+        states: [CREATED, SUCCESS, FAILED]
 
 tasks:
   # ==== PushFlows plugin ====

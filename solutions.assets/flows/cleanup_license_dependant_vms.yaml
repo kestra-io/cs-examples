@@ -17,6 +17,11 @@ triggers:
 inputs:
   - id: license
     type: SELECT
+    # v2 rejects a flow whose Webhook or Schedule trigger cannot resolve a
+    # required input. The Flow trigger supplies this one; the webhook does not,
+    # so it resolves to null on that path. Wire it to the webhook payload if
+    # the webhook is meant to purge a specific license.
+    required: false
     expression: "{{ assets(type = 'io.kestra.plugin.ee.assets.VM.License') | jq('.[].id') }}"
 
 tasks:
