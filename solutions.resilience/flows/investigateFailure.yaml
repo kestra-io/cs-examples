@@ -17,14 +17,10 @@ labels:
 triggers:
   - id: on_dynamic_recovery_sla_breach
     type: io.kestra.plugin.core.trigger.Flow
-    preconditions:
-      id: sla_breach
-      flows:
-        - namespace: solutions.resilience
-          flowId: dynamicRecovery
-          states: [CANCELLED]
-          labels:
-            sla: breach
+    dependsOn:
+      - flowId: dynamicRecovery
+        namespace: solutions.resilience
+        states: [CANCELLED]
 
 tasks:
   - id: log_rca

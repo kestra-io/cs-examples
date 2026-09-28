@@ -23,15 +23,10 @@ tasks:
 triggers:
   - id: listen
     type: io.kestra.plugin.core.trigger.Flow
-    conditions:
-      - type: io.kestra.plugin.core.condition.ExecutionStatus
-        in:
+    dependsOn:
+      - flowId: alerting_error_handling
+        namespace: solutions.demo
+        when: "{{ trigger.namespace startsWith 'solutions.demo' }}"
+        states:
           - FAILED
           - WARNING
-      - type: io.kestra.plugin.core.condition.ExecutionNamespace
-        namespace: solutions.demo
-        prefix: true
-      - type: io.kestra.plugin.core.condition.ExecutionFlow
-        flowId: alerting_error_handling
-        namespace: solutions.demo
-        

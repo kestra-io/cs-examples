@@ -119,12 +119,12 @@ tasks:
       Write the Section report
 
   - id: notifySlack
-    type: io.kestra.plugin.slack.SlackIncomingWebhook
+    type: io.kestra.plugin.slack.notifications.SlackIncomingWebhook
     url: "{{ secret('SLACK_WEBHOOK') }}"
     messageText: |
       *Cluster* {{ inputs.clusterName }} {{ inputs.cloudProvider }} | *Account*: {{ inputs.accountId }} | *Window*: {{ inputs.dateFrom }} -> {{ inputs.dateTo }}
       ```{{ outputs.rootCauseSynthesis.textOutput }}```
-      
+
 pluginDefaults:
   - type: io.kestra.plugin.ai.agent.AIAgent
     values:

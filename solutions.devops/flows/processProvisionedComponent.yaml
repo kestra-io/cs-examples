@@ -100,11 +100,10 @@ tasks:
 triggers:
   - id: on_component_approved
     type: io.kestra.plugin.core.trigger.Flow
-    conditions:
-      - type: io.kestra.plugin.core.condition.ExecutionFlow
-        namespace: solutions.devops
-        flowId: request_component_provisioning_idem_test
-    states: [SUCCESS]
     inputs:
       application: "{{ trigger.outputs.application }}"
       component_name: "{{ trigger.outputs.component_name }}"
+    dependsOn:
+      - flowId: request_component_provisioning_idem_test
+        namespace: solutions.devops
+        states: [SUCCESS]
