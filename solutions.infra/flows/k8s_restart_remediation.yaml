@@ -93,11 +93,6 @@ errors:
       *Target:* {{ inputs.namespace }}/{{ inputs.deployment_name }}
       *Note:* The rollout did not complete or the service is still unhealthy.
 
-pluginDefaults:
-  - forced: false
-    type: io.kestra.plugin.kubernetes
-    values:
-      connection:
-        masterUrl: "{{ secret('K8S_MASTER_URL') }}"
-        caCertData: "{{ secret('K8S_CA_CERT_DATA') }}"
-        oauthToken: "{{ secret('K8S_OAUTH_TOKEN') }}"
+policyRefs:
+  - k8s-restart-remediation-defaults
+

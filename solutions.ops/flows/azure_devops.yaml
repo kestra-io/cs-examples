@@ -64,13 +64,6 @@ tasks:
 
 
 
-pluginDefaults:
-  - forced: false
-    type: io.kestra.plugin.azure
-    values:
-        servicePrincipal: true
-        username: "{{secret('AZURE_SP_APP_ID')}}"
-        password: "{{ secret('AZURE_SP_PASSWORD') }}"
-        tenant: "{{ secret('AZURE_TENANT_ID') }}"
-
+policyRefs:
+  - azure-devops-defaults
 

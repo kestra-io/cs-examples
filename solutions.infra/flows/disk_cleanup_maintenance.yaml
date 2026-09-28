@@ -101,10 +101,6 @@ errors:
     messageText: >
       ❌ *Cleanup Failed* on {{ inputs.target_host }}. Check SSH connectivity or sudo permissions.
 
-pluginDefaults:
-  - forced: false
-    type: io.kestra.plugin.fs.ssh
-    values:
-      host: "{{ inputs.target_host }}"
-      username: "{{ inputs.remote_user }}"
-      privateKey: "{{ secret('SSH_PRIVATE_KEY') }}"
+policyRefs:
+  - disk-cleanup-maintenance-defaults
+

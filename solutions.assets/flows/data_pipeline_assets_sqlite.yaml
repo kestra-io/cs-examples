@@ -108,11 +108,8 @@ tasks:
   #         io.kestra.plugin.ee.assets.Table:
   #           namespace: "{{ flow.namespace }}"
 
-pluginDefaults:
-  - type: io.kestra.plugin.jdbc.sqlite
-    values:
-      url: jdbc:sqlite:myfile.db
-      fetchType: NONE
+policyRefs:
+  - data-pipeline-assets-sqlite-defaults
 
 triggers:
   - id: daily_5am_schedule

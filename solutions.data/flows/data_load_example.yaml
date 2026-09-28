@@ -20,13 +20,8 @@ triggers:
     fetchType: STORE
   
 
-pluginDefaults:
-  - forced: false
-    type: io.kestra.plugin.databricks
-    values:
-      authentication:
-        token: "{{secret('DATABRICKS_TOKEN')}}"
-      host: "{{secret('DATABRICKS_HOST')}}"
+policyRefs:
+  - data-load-example-defaults
 
 tasks:
   - id: json

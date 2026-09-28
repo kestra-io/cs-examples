@@ -3,13 +3,8 @@ namespace: solutions.data
 labels:
   - key: "maintainer"
     value: "paul"
-pluginDefaults:
-  - forced: false
-    type: io.kestra.plugin.jdbc.postgresql
-    values:
-      url: "{{secret('JDBC_CONNECTION_STRING')}}"
-      username: "{{secret('PG_USERNAME')}}"
-      password: "{{secret('PG_PASSWORD')}}"    
+policyRefs:
+  - process-files-defaults
 
 triggers:
   - id: daily

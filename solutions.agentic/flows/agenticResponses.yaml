@@ -125,17 +125,8 @@ tasks:
       *Cluster* {{ inputs.clusterName }} {{ inputs.cloudProvider }} | *Account*: {{ inputs.accountId }} | *Window*: {{ inputs.dateFrom }} -> {{ inputs.dateTo }}
       ```{{ outputs.rootCauseSynthesis.textOutput }}```
 
-pluginDefaults:
-  - type: io.kestra.plugin.ai.agent.AIAgent
-    values:
-      provider: 
-        type: io.kestra.plugin.ai.provider.OpenAI
-        baseUrl: "https://wrapper.gateway.example.com/api/openai/v1"
-        modelName: "gcp:gemini-2.5-flash" # note here that the model is gemini but the provider is openAI. reason being custom wrapper built using openAI spec also hosting gemini models.
-        apiKey: "dummy"
-        # for mTLS auth
-        clientPem: "{{ read('file:///tmp/volume/mounted/secrets/path/cert.pem') ~ read('file:///tmp/volume/mounted/secrets/path/private.pem') }}"
-        caPem: "{{ read('file:///tmp/volume/mounted/secrets/path/caPem.pem') }}" 
+policyRefs:
+  - agenticresponses-defaults
 
 inputs:
   - id: accountId

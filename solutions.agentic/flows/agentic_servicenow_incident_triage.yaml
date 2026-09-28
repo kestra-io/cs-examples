@@ -74,14 +74,6 @@ tasks:
         data:
           comments: "{{ outputs.ask_ai.textOutput }}"
 
-pluginDefaults:
-  - type: io.kestra.plugin.ai.provider.GoogleGemini
-    values:
-      apiKey: "{{ secret(key='GEMINI_KEY', namespace='system') }}"
-      modelName: gemini-2.5-flash
+policyRefs:
+  - agentic-servicenow-incident-triage-defaults
 
-  - type: io.kestra.plugin.servicenow
-    values:
-      domain: "{{ secret('SERVICE_NOW_DOMAIN') }}"
-      username: "{{ secret('SERVICE_NOW_USER') }}"
-      password: "{{ secret('SERVICE_NOW_PASSWORD') }}"
