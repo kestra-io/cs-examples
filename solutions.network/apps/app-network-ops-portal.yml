@@ -1,0 +1,90 @@
+id: app-network-ops-portal
+type: io.kestra.plugin.ee.apps.Execution
+namespace: solutions.network
+displayName: Network Operations Portal
+description: Submit and track network change requests. All changes are audited, approved, and reversible.
+flowId: 07-interact-change-request
+
+access:
+  type: PRIVATE
+  catalog: true
+
+tags:
+  - Network Operations
+  - Change Management
+  - Infrastructure
+
+layout:
+  - on: OPEN
+    blocks:
+      - type: io.kestra.plugin.ee.apps.core.blocks.Markdown
+        content: |
+          # Network Operations Portal
+
+          Submit a network change request. Every request is:
+
+          - **Audited** — requestor, timestamp, and decision logged immutably
+          - **Approved** — changes require manager sign-off before execution
+          - **Traceable** — full execution history visible in the Kestra timeline
+          - **Reversible** — automated rollback on production failure
+
+          ---
+
+          Fill in the form below. You will receive a notification when your request is reviewed.
+      - type: io.kestra.plugin.ee.apps.execution.blocks.CreateExecutionForm
+      - type: io.kestra.plugin.ee.apps.execution.blocks.CreateExecutionButton
+        text: Submit Change Request
+
+  - on: RUNNING
+    blocks:
+      - type: io.kestra.plugin.ee.apps.core.blocks.Markdown
+        content: |
+          ## Request submitted
+
+          Your change request is being processed. A reviewer will be assigned based on
+          change type and priority. You will receive a notification when a decision is made.
+      - type: io.kestra.plugin.ee.apps.core.blocks.Loading
+      - type: io.kestra.plugin.ee.apps.execution.blocks.Logs
+      - type: io.kestra.plugin.ee.apps.execution.blocks.CancelExecutionButton
+        text: Withdraw request
+
+  - on: PAUSE
+    blocks:
+      - type: io.kestra.plugin.ee.apps.core.blocks.Markdown
+        content: |
+          ## Change Request Awaiting Your Approval
+
+          Review the request details below. The configuration and blast radius report
+          are attached to the execution in the Kestra UI.
+      - type: io.kestra.plugin.ee.apps.execution.blocks.Inputs
+      - type: io.kestra.plugin.ee.apps.core.blocks.Markdown
+        content: |
+          ---
+          **Select your decision and add notes below.**
+      - type: io.kestra.plugin.ee.apps.execution.blocks.ResumeExecutionForm
+      - type: io.kestra.plugin.ee.apps.execution.blocks.ResumeExecutionButton
+        text: Submit Decision
+
+  - on: SUCCESS
+    blocks:
+      - type: io.kestra.plugin.ee.apps.core.blocks.Alert
+        style: SUCCESS
+        showIcon: true
+        content: Change request completed successfully. Provisioning is running in the background.
+      - type: io.kestra.plugin.ee.apps.execution.blocks.Outputs
+      - type: io.kestra.plugin.ee.apps.core.blocks.Button
+        text: Submit another request
+        url: "{{ app.url }}"
+        style: DEFAULT
+
+  - on: FAILURE
+    blocks:
+      - type: io.kestra.plugin.ee.apps.core.blocks.Alert
+        style: ERROR
+        showIcon: true
+        content: Something went wrong. The execution logs below contain the full error details.
+      - type: io.kestra.plugin.ee.apps.execution.blocks.Logs
+      - type: io.kestra.plugin.ee.apps.core.blocks.Button
+        text: Try again
+        url: "{{ app.url }}"
+        style: DEFAULT

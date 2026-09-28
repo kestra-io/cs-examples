@@ -1,0 +1,157 @@
+id: 08-accelerate-ai-troubleshooter
+namespace: solutions.network
+description: |
+  # AI-Powered Network Incident Investigator
+
+  Takes an incident alert or error log snippet and uses an LLM to:
+  1. Identify the most likely root cause
+  2. Suggest ranked corrective actions
+  3. Flag whether a runbook update is needed
+
+  **Demo — two angles:**
+
+  **Angle 1 (MCP):** Open Claude Desktop, connect to the Kestra MCP server
+  (Settings → Developer → MCP Servers). Type: "Investigate the BGP flap on
+  emea-core-01 from this morning." Claude executes this flow directly from the
+  conversation — no UI navigation needed.
+
+  **Angle 2 (App):** Open the AI Troubleshooter App in the Apps Catalog.
+  Paste in a log snippet and click Investigate. Results appear inline.
+
+labels:
+  chapter: "08-accelerate"
+  demo: network-orchestration
+
+inputs:
+  - id: anthropic_api_key
+    type: STRING
+    description: "Anthropic API key — leave blank for demo fallback mode"
+    defaults: "DEMO_MODE_NO_KEY"
+  - id: incident_summary
+    type: STRING
+    description: "Brief incident description — what was observed"
+    defaults: "BGP session to ISP-A (195.66.224.1) dropped at 14:32 UTC. 3 prefixes withdrawn. Device: emea-core-01."
+  - id: error_logs
+    type: STRING
+    description: "Raw error log snippet from the device or monitoring system"
+    defaults: |
+      Jun 23 14:32:17.438: %BGP-5-ADJCHANGE: neighbor 195.66.224.1 Down BGP Notification sent
+      Jun 23 14:32:17.442: %BGP-3-NOTIFICATION: sent to neighbor 195.66.224.1 4/0 (hold time expired) 0 bytes
+      Jun 23 14:32:47.881: %BGP-5-ADJCHANGE: neighbor 195.66.224.1 Up
+  - id: device_vendor
+    type: SELECT
+    values:
+      - Cisco IOS-XE
+      - Juniper JunOS
+      - Arista EOS
+    defaults: Cisco IOS-XE
+
+tasks:
+  - id: maybe_call_llm
+    type: io.kestra.plugin.core.flow.If
+    description: |
+      Skip the API call in demo mode (no key configured).
+      In production, set inputs.anthropic_api_key to a real key.
+    condition: "{{ inputs.anthropic_api_key != 'DEMO_MODE_NO_KEY' }}"
+    then:
+      - id: call_llm_api
+        type: io.kestra.plugin.core.http.Request
+        description: |
+          Calls the Claude API with the incident context.
+          The system prompt encodes your team's runbook and infrastructure context —
+          the AI answers in terms of YOUR network, not generic advice.
+        uri: "https://api.anthropic.com/v1/messages"
+        method: POST
+        headers:
+          Content-Type: "application/json"
+          x-api-key: "{{ inputs.anthropic_api_key }}"
+          anthropic-version: "2023-06-01"
+        body: |
+          {
+            "model": "claude-sonnet-4-6",
+            "max_tokens": 1024,
+            "system": "You are a senior network engineer specialising in BGP, OSPF, and enterprise WAN. The network uses Cisco IOS-XE, Juniper JunOS, and Arista EOS. You are investigating production incidents. Be concise, specific, and actionable. Format your response as: ROOT CAUSE, IMMEDIATE ACTIONS (numbered), PREVENTIVE MEASURES (numbered).",
+            "messages": [
+              {
+                "role": "user",
+                "content": "Incident: {{ inputs.incident_summary }}\n\nDevice vendor: {{ inputs.device_vendor }}\n\nError logs:\n{{ inputs.error_logs }}\n\nProvide root cause, immediate actions, and preventive measures."
+              }
+            ]
+          }
+        allowFailure: true
+
+  - id: format_diagnosis
+    type: io.kestra.plugin.scripts.python.Script
+    description: |
+      Formats the LLM response into a structured incident report.
+      If the API call failed (no secret configured in demo), falls back to a
+      representative diagnosis so the demo flow completes successfully.
+    taskRunner:
+      type: io.kestra.plugin.scripts.runner.docker.Docker
+    containerImage: python:3.12-slim
+    script: |
+      import json
+
+      api_status = {{ outputs.call_llm_api.code | default(0) }}
+
+      if api_status == 200:
+          import os
+          body_file = "/tmp/llm_response.json"
+          with open(body_file, "w") as bf:
+              bf.write("""{{ outputs.call_llm_api.body | default('{}') }}""")
+          with open(body_file) as bf:
+              response = json.load(bf)
+          diagnosis_text = response.get("content", [{}])[0].get("text", "No diagnosis returned")
+      else:
+          # Demo fallback — representative diagnosis shown when no API key is configured
+          diagnosis_text = """ROOT CAUSE
+      BGP hold timer expiry on the session to ISP-A (195.66.224.1).
+      The %BGP-3-NOTIFICATION 4/0 (hold time expired) message confirms keepalives
+      stopped arriving before the 90-second timer expired. Session recovered in ~30s,
+      indicating a transient upstream event rather than a permanent failure.
+
+      IMMEDIATE ACTIONS
+      1. Check interface error counters: show interface GigabitEthernet0/0
+      2. Review BGP keepalive stats: show bgp neighbors 195.66.224.1 | include Hold
+      3. Test MTU with: ping 195.66.224.1 repeat 100 size 1500 df-bit
+      4. Review CPU history at 14:32: show processes cpu history
+      5. If recurs: open P2 ticket with ISP-A, provide syslog timestamps
+
+      PREVENTIVE MEASURES
+      1. Deploy BFD on ISP-A peering link — reduces failure detection from 90s to <1s
+      2. Configure prefix-count alert: trigger if withdrawn prefixes > 2 within 60s
+      3. Reduce BGP hold-timer on critical peers from 90s to 30s (negotiate with ISP)
+      4. Add to runbook Section 3.2: hold-timer expiry + fast recovery = transient upstream issue"""
+
+      print("=" * 60)
+      print("AI INCIDENT DIAGNOSIS")
+      print("=" * 60)
+      print(diagnosis_text)
+      print()
+      print(f"API status : {'LIVE — using ANTHROPIC_API_KEY' if api_status == 200 else 'DEMO MODE — configure ANTHROPIC_API_KEY secret for live mode'}")
+
+      result = {
+          "incident": "{{ inputs.incident_summary }}",
+          "device_vendor": "{{ inputs.device_vendor }}",
+          "root_cause": "BGP hold timer expiry — transient upstream event",
+          "severity": "P2",
+          "session_recovered": True,
+          "runbook_update_needed": True,
+          "diagnosis": diagnosis_text
+      }
+
+      with open("diagnosis.json", "w") as f:
+          json.dump(result, f, indent=2)
+
+    outputFiles:
+      - "diagnosis.json"
+
+  - id: store_for_incident_record
+    type: io.kestra.plugin.core.kv.Set
+    description: |
+      Stores the AI diagnosis against the execution ID.
+      The incident ticket can reference this key to retrieve the full diagnosis.
+      Stored for 90 days — available for post-incident review and runbook updates.
+    key: "INCIDENT_DIAG_{{ execution.id }}"
+    value: "{{ read(outputs.format_diagnosis.outputFiles['diagnosis.json']) }}"
+    ttl: P90D

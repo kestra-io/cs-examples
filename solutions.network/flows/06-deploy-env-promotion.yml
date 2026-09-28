@@ -1,0 +1,154 @@
+id: 06-deploy-env-promotion
+namespace: solutions.network
+description: |
+  # Configuration Promotion Pipeline
+
+  Promotes a tested network configuration change through three stages:
+  Lab → Staging → Production. Each stage runs post-verification checks before
+  gating on human approval to proceed.
+
+  **Demo:** After running this, navigate to Namespaces → Variables in the Kestra UI.
+  Show `solutions.network.lab`, `solutions.network.staging`, `solutions.network.prod` namespace
+  variables — each holds environment-specific endpoints and credentials.
+  The same flow reads different values based on which namespace it executes in.
+  That is how you model environments without branching logic inside flows.
+
+labels:
+  chapter: "06-deploy"
+  demo: network-orchestration
+
+inputs:
+  - id: change_ticket
+    type: STRING
+    defaults: "CHG0042137"
+  - id: config_version
+    type: STRING
+    description: "Git SHA or versioned config bundle (e.g. v2.4.1-emea-core)"
+    defaults: "v2.4.1-emea-core"
+  - id: target_region
+    type: SELECT
+    values:
+      - EMEA
+      - AMER
+      - APAC
+    defaults: EMEA
+
+tasks:
+  - id: lab_stage
+    type: io.kestra.plugin.scripts.python.Script
+    description: |
+      Deploys to the virtual lab topology (GNS3 / EVE-NG) that mirrors production.
+      Runs the full test suite: routing convergence, BGP peering, SNMP reachability.
+      Lab variables live in the `solutions.network.lab` namespace.
+    taskRunner:
+      type: io.kestra.plugin.scripts.runner.docker.Docker
+    containerImage: python:3.12-slim
+    script: |
+      import json, time
+      print(f"[LAB] Deploying {{ inputs.config_version }} to lab topology ({{ inputs.target_region }})...")
+      time.sleep(1)
+      result = {
+          "stage": "lab", "region": "{{ inputs.target_region }}",
+          "status": "SUCCESS", "devices_updated": 2,
+          "tests_passed": 8, "tests_failed": 0
+      }
+      print(json.dumps(result, indent=2))
+      print("✅ Lab stage complete — 8/8 tests passed")
+
+  - id: approve_staging_promotion
+    type: io.kestra.plugin.core.flow.Pause
+    description: |
+      Lab tests passed. Waiting for Network Architecture team to promote to Staging.
+      Reviewer receives a link to this execution with the lab test report attached.
+    onResume:
+      - id: staging_approval
+        type: SELECT
+        description: "Lab tests passed. Promote this change to Staging?"
+        values:
+          - Promote to Staging
+          - Hold — needs rework
+      - id: review_notes
+        type: STRING
+        description: "Reviewer notes"
+
+  - id: staging_stage
+    type: io.kestra.plugin.scripts.python.Script
+    description: |
+      Deploys to pre-production network segment — real hardware, isolated from
+      production traffic. Runs extended test suite including failover scenarios.
+    taskRunner:
+      type: io.kestra.plugin.scripts.runner.docker.Docker
+    containerImage: python:3.12-slim
+    script: |
+      import json, time
+      print(f"[STAGING] Deploying {{ inputs.config_version }} to staging ({{ inputs.target_region }})...")
+      time.sleep(2)
+      result = {
+          "stage": "staging", "region": "{{ inputs.target_region }}",
+          "status": "SUCCESS", "devices_updated": 4,
+          "tests_passed": 23, "tests_failed": 0
+      }
+      print(json.dumps(result, indent=2))
+      print("✅ Staging stage complete — 23/23 tests passed")
+
+  - id: approve_prod_promotion
+    type: io.kestra.plugin.core.flow.Pause
+    description: |
+      Staging tests passed. **Final gate before production.**
+      Requires sign-off from Network Lead and Change Manager.
+      Approver provides the approved maintenance window here.
+    onResume:
+      - id: prod_approval
+        type: SELECT
+        description: "Staging verified. Approve this change for production?"
+        values:
+          - Promote to Production
+          - Rollback — hold at staging
+      - id: change_window
+        type: STRING
+        description: "Approved maintenance window (e.g. 2026-06-25 02:00 UTC)"
+      - id: rollback_plan_acknowledged
+        type: SELECT
+        description: "Rollback plan reviewed and ready?"
+        values:
+          - Confirmed — rollback ready
+          - Not confirmed
+
+  - id: production_stage
+    type: io.kestra.plugin.scripts.python.Script
+    description: |
+      Deploys to live production network in the approved maintenance window.
+      Every step is logged — full audit trail written to the change ticket.
+      On failure: the `errors` handler triggers the automated rollback flow.
+    taskRunner:
+      type: io.kestra.plugin.scripts.runner.docker.Docker
+    containerImage: python:3.12-slim
+    script: |
+      import json, time
+      print(f"[PRODUCTION] Deploying {{ inputs.config_version }} to {{ inputs.target_region }}...")
+      print("Entering maintenance window...")
+      time.sleep(2)
+      result = {
+          "stage": "production",
+          "change_ticket": "{{ inputs.change_ticket }}",
+          "config_version": "{{ inputs.config_version }}",
+          "region": "{{ inputs.target_region }}",
+          "execution_id": "{{ execution.id }}",
+          "status": "SUCCESS",
+          "devices_updated": 6,
+          "tests_passed": 31
+      }
+      print(json.dumps(result, indent=2))
+      print(f"\n✅ Production deployment complete.")
+      print(f"   Closing change ticket {{ inputs.change_ticket }}")
+
+errors:
+  - id: trigger_rollback
+    type: io.kestra.plugin.core.log.Log
+    description: |
+      On production failure: automatic rollback flow is triggered.
+      The previous config version is re-applied from the Git-backed config store.
+    message: |
+      PRODUCTION DEPLOYMENT FAILED | {{ inputs.change_ticket }}
+      Initiating automated rollback to previous config version.
+      On-call team notified. Execution: {{ execution.id }}

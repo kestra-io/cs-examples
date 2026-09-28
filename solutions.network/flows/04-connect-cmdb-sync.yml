@@ -1,0 +1,106 @@
+id: 04-connect-cmdb-sync
+namespace: solutions.network
+description: |
+  # CMDB Device Inventory Sync
+
+  Pulls the current device inventory from the enterprise CMDB (NetBox),
+  normalises the data, and stores it in Kestra's KV store for downstream flows.
+
+  **Demo:** Show the KV Store tab in the Kestra UI after this runs to see the stored
+  device inventory. Any provisioning flow can read this key — no copy-paste, no
+  manual config files, no stale spreadsheets.
+
+  **Kestra is not just an executor — it is the integration bus.**
+  Any CMDB, ticketing system, or monitoring tool feeds into the orchestration layer
+  through flows like this one, without custom glue code.
+
+labels:
+  chapter: "04-connect"
+  demo: network-orchestration
+
+tasks:
+  - id: process_inventory
+    type: io.kestra.plugin.scripts.python.Script
+    description: |
+      Calls the NetBox API directly from Python, parses the response, normalises
+      field names, and flags devices with missing IP assignments.
+
+      Endpoint : GET http://netbox-mock:8000/api/dcim/devices/?status=planned&limit=100
+      Auth     : Token nb-demo-token-airbus
+    taskRunner:
+      type: io.kestra.plugin.scripts.runner.docker.Docker
+      networkMode: tutorial_default
+    containerImage: python:3.12-slim
+    script: |
+      import json, urllib.request
+
+      req = urllib.request.Request(
+          "http://netbox-mock:8000/api/dcim/devices/?status=planned&limit=100",
+          headers={"Authorization": "Token nb-demo-token-airbus", "Accept": "application/json"}
+      )
+      with urllib.request.urlopen(req) as resp:
+          raw = json.loads(resp.read())
+
+      results = raw.get("results", [])
+
+      devices = []
+      for d in results:
+          vendor = d.get("device_type", {}).get("manufacturer", {}).get("name", "Unknown")
+          model  = d.get("device_type", {}).get("model", "Unknown")
+          ip     = (d.get("primary_ip") or {}).get("address", "").split("/")[0]
+          region = d.get("custom_fields", {}).get("region", "UNKNOWN")
+          site   = d.get("site", {}).get("name", "Unknown")
+          devices.append({
+              "hostname": d["name"],
+              "vendor":   vendor,
+              "model":    model,
+              "region":   region,
+              "status":   d["status"]["value"],
+              "mgmt_ip":  ip,
+              "site":     site,
+              "netbox_id": d["id"]
+          })
+
+      by_vendor = {}
+      for d in devices:
+          by_vendor[d["vendor"]] = by_vendor.get(d["vendor"], 0) + 1
+
+      print("=" * 55)
+      print(f"NETBOX SYNC — {raw.get('count', 0)} planned devices")
+      print(f"By vendor : {json.dumps(by_vendor)}")
+      print("=" * 55)
+      for d in devices:
+          print(f"ZTP QUEUE | {d['hostname']:25s} | {d['vendor']:7s} {d['model']:10s} | {d['region']} | {d['site']}")
+
+      inventory = {"devices": devices, "planned_count": len(devices), "sync_source": "NetBox"}
+      with open("device_inventory.json", "w") as f:
+          json.dump(inventory, f, indent=2)
+
+    outputFiles:
+      - "device_inventory.json"
+
+  - id: store_in_kv
+    type: io.kestra.plugin.core.kv.Set
+    description: |
+      Persists the normalised device inventory in Kestra's KV store.
+      Key: NETWORK_DEVICE_INVENTORY | TTL: 24 hours
+
+      Downstream flows read from this key at execution time — always fresh CMDB data.
+    key: "NETWORK_DEVICE_INVENTORY"
+    value: "{{ read(outputs.process_inventory.outputFiles['device_inventory.json']) }}"
+    ttl: PT24H
+
+  - id: log_complete
+    type: io.kestra.plugin.core.log.Log
+    message: |
+      NetBox sync complete.
+      KV key  : NETWORK_DEVICE_INVENTORY  (TTL: 24h)
+      Devices : see process_inventory task logs above
+      Ready for ZTP provisioning flow (05-compose-ztp-provisioning).
+
+triggers:
+  - id: hourly_sync
+    type: io.kestra.plugin.core.trigger.Schedule
+    description: "Syncs every hour to pick up newly registered devices."
+    cron: "0 * * * *"
+    disabled: true

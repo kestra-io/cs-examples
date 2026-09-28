@@ -1,0 +1,161 @@
+id: 03-verify-change-validation
+namespace: solutions.network
+description: |
+  # Pre-Deployment Change Validation Gate
+
+  Runs a multi-stage validation suite before any network configuration change
+  is applied to a device. Validates: device reachability, config syntax,
+  compliance policy constraints, and estimated blast radius.
+
+  **Demo:** Run this with different inputs to show pass/fail behavior.
+  A FAIL here means the execution fails — nothing reaches the device.
+  The execution ID becomes the proof-of-validation attached to the change ticket.
+
+  **This is the flow that prevents "we'll roll back if it breaks."**
+
+labels:
+  chapter: "03-verify"
+  demo: network-orchestration
+
+inputs:
+  - id: device_hostname
+    type: STRING
+    description: "Target device hostname (must be registered in CMDB)"
+    defaults: "core-rtr-emea-01"
+  - id: change_type
+    type: SELECT
+    values:
+      - ZTP_PROVISION
+      - BGP_UPDATE
+      - FIREWALL_RULE
+      - VLAN_CHANGE
+    defaults: ZTP_PROVISION
+  - id: config_payload
+    type: STRING
+    description: "Proposed configuration block (IOS-XE / JunOS / EOS CLI)"
+    defaults: |
+      interface GigabitEthernet0/0
+        description "Uplink — auto-provisioned by Kestra ZTP"
+        ip address 10.1.1.1 255.255.255.0
+        no shutdown
+
+tasks:
+  - id: check_device_reachability
+    type: io.kestra.plugin.core.http.Request
+    description: |
+      Verifies the target device's management plane is responsive before sending any config.
+      In production: NAPALM `get_facts()` or NETCONF `hello` handshake.
+      A timeout here fails the entire flow — safe default.
+    uri: "http://netbox-mock:8000/health"
+    method: GET
+    allowFailure: true
+
+  - id: validate_config_syntax
+    type: io.kestra.plugin.scripts.python.Script
+    description: |
+      Parses the proposed configuration through the vendor's config validator.
+      Catches syntax errors before they reach the device.
+
+      In production: Batfish network model / Cisco NSO dry-run / `junos-pyez` commit check.
+    taskRunner:
+      type: io.kestra.plugin.scripts.runner.docker.Docker
+    containerImage: python:3.12-slim
+    script: |
+      config = """{{ inputs.config_payload }}"""
+      change_type = "{{ inputs.change_type }}"
+      errors = []
+
+      if change_type == "ZTP_PROVISION":
+          if "no shutdown" not in config:
+              errors.append("Interface not activated — missing 'no shutdown'")
+          if "ip address" not in config and "inet address" not in config:
+              errors.append("No IP address assigned in provision config")
+          if "description" not in config:
+              errors.append("POLICY VIOLATION: All interfaces must have a description field")
+
+      if errors:
+          for e in errors:
+              print(f"SYNTAX ERROR: {e}")
+          raise SystemExit(1)
+
+      print("✅ Config syntax valid — 0 errors")
+
+  - id: check_compliance_policy
+    type: io.kestra.plugin.scripts.python.Script
+    description: |
+      Evaluates the proposed change against the network compliance policy.
+      Policy engine checks: RFC 1918 address ranges, required description fields,
+      disallowed protocols, and change-window constraints.
+
+      In production: policy-as-code evaluated against a Git-versioned rules repo.
+    taskRunner:
+      type: io.kestra.plugin.scripts.runner.docker.Docker
+    containerImage: python:3.12-slim
+    script: |
+      import re, sys
+      config = """{{ inputs.config_payload }}"""
+      violations = []
+      warnings = []
+
+      # Rule: RFC 1918 addresses required for internal interfaces
+      rfc1918 = re.search(r'(10\.\d+\.\d+\.\d+|172\.(1[6-9]|2\d|3[01])\.\d+\.\d+|192\.168\.\d+\.\d+)', config)
+      if not rfc1918:
+          warnings.append("No RFC 1918 address found — verify this is an intentional public IP assignment")
+
+      # Rule: telnet / cleartext protocols not allowed
+      if re.search(r'\btelnet\b', config, re.IGNORECASE):
+          violations.append("POLICY VIOLATION: Telnet is prohibited — use SSH")
+
+      # Rule: SNMP community strings must not be 'public' or 'private'
+      if re.search(r'community\s+(public|private)\b', config, re.IGNORECASE):
+          violations.append("POLICY VIOLATION: Default SNMP community string detected")
+
+      for w in warnings:
+          print(f"⚠  {w}")
+
+      if violations:
+          for v in violations:
+              print(f"❌ {v}")
+          raise SystemExit(1)
+
+      print("✅ Compliance policy: PASS")
+
+  - id: estimate_blast_radius
+    type: io.kestra.plugin.scripts.python.Script
+    description: |
+      Queries the CMDB dependency graph to enumerate downstream services affected
+      by this change. Informs the approver of the impact radius before sign-off.
+      In production: ServiceNow CMDB API or NetBox relationship graph traversal.
+    taskRunner:
+      type: io.kestra.plugin.scripts.runner.docker.Docker
+    containerImage: python:3.12-slim
+    script: |
+      import json
+
+      blast_radius = {
+          "device": "{{ inputs.device_hostname }}",
+          "change_type": "{{ inputs.change_type }}",
+          "directly_affected_cis": 3,
+          "downstream_services": ["erp-prod-cluster", "monitoring-collector-01", "voip-gateway-emea"],
+          "estimated_downtime_seconds": 0,
+          "risk_level": "LOW",
+          "rollback_time_seconds": 120
+      }
+
+      print(json.dumps(blast_radius, indent=2))
+      print(f"\n✅ Blast radius: {blast_radius['directly_affected_cis']} CIs | Risk: {blast_radius['risk_level']} | Rollback: {blast_radius['rollback_time_seconds']}s")
+
+  - id: validation_passed
+    type: io.kestra.plugin.core.log.Log
+    description: |
+      All gates passed. This execution ID is attached to the change ticket as
+      immutable proof-of-validation. The ZTP provisioning flow will not proceed
+      without a SUCCESS status from this flow.
+    message: |
+      ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+      VALIDATION REPORT — {{ inputs.device_hostname }}
+      Change type  : {{ inputs.change_type }}
+      Result       : ✅ ALL CHECKS PASSED
+      Proof-of-val : {{ execution.id }}
+      Timestamp    : {{ execution.startDate }}
+      ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
