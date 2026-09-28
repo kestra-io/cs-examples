@@ -3,12 +3,16 @@ namespace: solutions.network
 description: |
   # CMDB Device Inventory Sync
 
-  Pulls the current device inventory from the enterprise CMDB (NetBox),
-  normalises the data, and stores it in Kestra's KV store for downstream flows.
+  Pulls the current device inventory from the enterprise CMDB (NetBox), normalises
+  the data, and lands it twice: as a KV blob for downstream flows, and as one
+  asset per device in the Asset catalogue.
 
-  **Demo:** Show the KV Store tab in the Kestra UI after this runs to see the stored
-  device inventory. Any provisioning flow can read this key — no copy-paste, no
-  manual config files, no stale spreadsheets.
+  **Demo:** Open the Assets tab after this runs. Every device is there with its
+  vendor, model, region, site and management IP as filterable metadata, and each
+  one traces back to the `netbox-cmdb` source asset in the lineage graph. The KV
+  Store tab shows the same data as a single blob, which is what downstream flow
+  05 reads. The contrast is the point: KV is a value you fetch, assets are
+  inventory you can query.
 
   **Kestra is not just an executor — it is the integration bus.**
   Any CMDB, ticketing system, or monitoring tool feeds into the orchestration layer
@@ -78,6 +82,16 @@ tasks:
 
     outputFiles:
       - "device_inventory.json"
+    assets:
+      outputs:
+        - id: netbox-cmdb
+          type: io.kestra.core.models.assets.External
+          displayName: NetBox CMDB
+          description: Source of record for the device inventory.
+          metadata:
+            system: NetBox
+            endpoint: http://netbox-mock:8000/api/dcim/devices/
+            query: status=planned
 
   - id: store_in_kv
     type: io.kestra.plugin.core.kv.Set
@@ -90,11 +104,52 @@ tasks:
     value: "{{ read(outputs.process_inventory.outputFiles['device_inventory.json']) }}"
     ttl: PT24H
 
+  - id: register_devices_as_assets
+    type: io.kestra.plugin.core.flow.Loop
+    description: |
+      Registers every device in the Asset catalogue, one asset per device.
+
+      The KV entry above is a single opaque blob: you get it back or you don't,
+      and nothing can query inside it. As assets the same devices are searchable
+      by type and filterable on their metadata, and they carry lineage back to
+      NetBox. Emission is keyed on the asset id, so the hourly re-sync refreshes
+      each device in place rather than piling up duplicates.
+
+      Type is `NetworkDevice` rather than `VM` deliberately: the solutions.assets
+      demos query `io.kestra.plugin.ee.assets.VM`, and routers and firewalls
+      landing in those results would be wrong.
+    concurrencyLimit: 0
+    values: "{{ fromJson(read(outputs.process_inventory.outputFiles['device_inventory.json'])).devices }}"
+    tasks:
+      - id: register_device
+        type: io.kestra.plugin.core.log.Log
+        message: "asset {{ fromJson(item.value).hostname }} <- {{ fromJson(item.value).vendor }} {{ fromJson(item.value).model }} @ {{ fromJson(item.value).site }}"
+        assets:
+          inputs:
+            # Ties each device back to the CMDB in the asset graph.
+            - id: netbox-cmdb
+          outputs:
+            - id: "{{ fromJson(item.value).hostname }}"
+              type: io.kestra.plugin.ee.assets.NetworkDevice
+              displayName: "{{ fromJson(item.value).hostname }}"
+              description: "{{ fromJson(item.value).vendor }} {{ fromJson(item.value).model }} at {{ fromJson(item.value).site }} ({{ fromJson(item.value).region }})."
+              metadata:
+                vendor: "{{ fromJson(item.value).vendor }}"
+                model: "{{ fromJson(item.value).model }}"
+                region: "{{ fromJson(item.value).region }}"
+                site: "{{ fromJson(item.value).site }}"
+                status: "{{ fromJson(item.value).status }}"
+                mgmt_ip: "{{ fromJson(item.value).mgmt_ip }}"
+                netbox_id: "{{ fromJson(item.value).netbox_id }}"
+                sync_source: NetBox
+                last_synced: "{{ execution.startDate }}"
+
   - id: log_complete
     type: io.kestra.plugin.core.log.Log
     message: |
       NetBox sync complete.
       KV key  : NETWORK_DEVICE_INVENTORY  (TTL: 24h)
+      Assets  : one io.kestra.plugin.ee.assets.NetworkDevice per device, from netbox-cmdb
       Devices : see process_inventory task logs above
       Ready for ZTP provisioning flow (05-compose-ztp-provisioning).
 
