@@ -77,6 +77,16 @@ layout:
         url: "{{ app.url }}"
         style: DEFAULT
 
+  # Resuming from the PAUSE layout returns a 500 and renders "Application Error",
+  # although the resume itself succeeds and the execution runs to completion
+  # (kestra-ee#11357: ResumeExecutionForm.build re-checks getExecutionIfPause
+  # while rebuilding the layout, by which point the execution has left PAUSED).
+  # AutoRefresh re-fetches the layout, so the App lands on the state the
+  # execution is actually in instead of stopping on that error.
+  - on: ERROR
+    blocks:
+      - type: io.kestra.plugin.ee.apps.core.blocks.AutoRefresh
+
   - on: FAILURE
     blocks:
       - type: io.kestra.plugin.ee.apps.core.blocks.Alert
