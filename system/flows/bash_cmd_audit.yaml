@@ -1,7 +1,7 @@
 id: bash_cmd_audit
 namespace: system
 description: Query Kestra APIs to list flows in a namespace, then use an AI Agent to scan for blacklisted bash commands within those flows.
-
+disabled: true
 labels:
   maintainer: "parham"
 
@@ -33,11 +33,6 @@ triggers:
     type: io.kestra.plugin.core.trigger.Schedule
     cron: "*/30 * * * *"
     disabled: true
-
-  - id: on_execution
-    type: io.kestra.plugin.core.trigger.Flow
-    dependsOn:
-      - when: "{{ trigger.namespace startsWith 'kestra.demo' }}"
 
 
 tasks:
