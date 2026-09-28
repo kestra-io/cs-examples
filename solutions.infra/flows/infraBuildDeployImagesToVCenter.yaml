@@ -60,7 +60,7 @@ tasks:
           - "Write-Host \"Docker image 'my-app-image:latest' built with ID: {{ outputs.buildDockerImage.imageId }}\""
 
   - id: deployImages
-    type: io.kestra.plugin.core.flow.ForEach
+    type: io.kestra.plugin.core.flow.Loop
     concurrencyLimit: 2
     values: "{{ outputs.getDeployMachinesListFromAPI.values.machines }}"
     tasks:       
@@ -69,9 +69,9 @@ tasks:
         namespace: solutions.infra
         flowId: infraDeployImage
         inputs:
-          machine: "{{ taskrun.value | jq('.hostName') | first }}"
-          ipAddress: "{{ taskrun.value | jq('.ipAddress') | first }}"
-          user: "{{ taskrun.value | jq('.owner') | first  }}"
+          machine: "{{ item.value | jq('.hostName') | first }}"
+          ipAddress: "{{ item.value | jq('.ipAddress') | first }}"
+          user: "{{ item.value | jq('.owner') | first  }}"
           image: "{{ outputs.buildDockerImage.imageId }}"
         wait: true
         transmitFailed: true

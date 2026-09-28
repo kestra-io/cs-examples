@@ -13,17 +13,17 @@ tasks:
     format: "{{ assets(type='io.kestra.plugin.ee.assets.VM') }}"
 
   - id: audit_servers
-    type: io.kestra.plugin.core.flow.ForEach
+    type: io.kestra.plugin.core.flow.Loop
     values: "{{ outputs.get_all_servers.value }}"
     tasks:
       - id: get_server_info
         type: io.kestra.plugin.core.execution.SetVariables
         variables:
-          server_id: "{{ fromJson(taskrun.value).id }}"
-          server_ip: "{{ fromJson(taskrun.value).metadata.ip_address }}"
-          python_version: "{{ fromJson(taskrun.value).metadata.python_version }}"
-          server_env: "{{ fromJson(taskrun.value).metadata.env }}"
-          server_os: "{{ fromJson(taskrun.value).metadata.os }}"
+          server_id: "{{ fromJson(item.value).id }}"
+          server_ip: "{{ fromJson(item.value).metadata.ip_address }}"
+          python_version: "{{ fromJson(item.value).metadata.python_version }}"
+          server_env: "{{ fromJson(item.value).metadata.env }}"
+          server_os: "{{ fromJson(item.value).metadata.os }}"
 
       - id: check_security_agent
         type: io.kestra.plugin.scripts.shell.Script
@@ -61,21 +61,21 @@ tasks:
         format: "{{ assets(metadata={'compliance_status': 'non-compliant'}) }}"
 
       - id: install_security_agent
-        type: io.kestra.plugin.core.flow.ForEach
+        type: io.kestra.plugin.core.flow.Loop
         values: "{{ outputs.find_non_compliant.value }}"
         tasks:
           - id: ssh_install
             type: io.kestra.plugin.scripts.shell.Commands
             runner: PROCESS
             commands:
-              - echo "Connecting to {{ fromJson(taskrun.value).id }} at {{ fromJson(taskrun.value).metadata.ip_address }}..."
+              - echo "Connecting to {{ fromJson(item.value).id }} at {{ fromJson(item.value).metadata.ip_address }}..."
               - echo "Installing CrowdStrike Agent v2.4..."
               - sleep 2
             assets:
               inputs:
-                - id: "{{ fromJson(taskrun.value).id }}"
+                - id: "{{ fromJson(item.value).id }}"
               outputs:
-                - id: "{{ fromJson(taskrun.value).id }}"
+                - id: "{{ fromJson(item.value).id }}"
                   type: io.kestra.plugin.ee.assets.VM
                   metadata:
                     # Crucial: Reset the status to compliant after the fix

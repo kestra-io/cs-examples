@@ -16,7 +16,7 @@ triggers:
 
 tasks:
   - id: get_csvs
-    type: io.kestra.plugin.core.flow.ForEach
+    type: io.kestra.plugin.core.flow.Loop
     values: "{{ trigger.objects | jq('.[].uri') }}"
     tasks:
       - id: csv
@@ -24,7 +24,7 @@ tasks:
         flowId: duckdb
         namespace: solutions.data
         inputs:
-          csvFile: "{{taskrun.value}}"
+          csvFile: "{{item.value}}"
   - id: merge
     type: io.kestra.plugin.core.storage.Concat
     files: "{{ outputs.csv | jq('.[].outputs.csv') }}"

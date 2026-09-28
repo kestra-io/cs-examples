@@ -32,7 +32,7 @@ tasks:
       enabled: true
 
   - id: getTicketDetails
-    type: io.kestra.plugin.core.flow.ForEach
+    type: io.kestra.plugin.core.flow.Loop
     values: "{{ fromJson(outputs.fetchOpenTickets.body).result }}"
     tasks:
       - id: processTicket
@@ -40,11 +40,11 @@ tasks:
         namespace: solutions.ops
         flowId: processServiceNowTicket
         inputs:
-          ticketNumber: "{{ fromJson(taskrun.value).number }}"
-          shortDescription: "{{ fromJson(taskrun.value).short_description }}"
-          openedAt: "{{ fromJson(taskrun.value).opened_at }}"
-          sysID: "{{ fromJson(taskrun.value).sys_id }}"
-          category: "{{ fromJson(taskrun.value).category }}"
+          ticketNumber: "{{ fromJson(item.value).number }}"
+          shortDescription: "{{ fromJson(item.value).short_description }}"
+          openedAt: "{{ fromJson(item.value).opened_at }}"
+          sysID: "{{ fromJson(item.value).sys_id }}"
+          category: "{{ fromJson(item.value).category }}"
 
   - id: updateLastCheckDate
     type: io.kestra.plugin.core.kv.Set

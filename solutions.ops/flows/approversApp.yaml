@@ -29,14 +29,14 @@ tasks:
     message: Hello World! 🚀
 
   - id: for_each
-    type: io.kestra.plugin.core.flow.ForEach
+    type: io.kestra.plugin.core.flow.Loop
     values: "{{ inputs.executionIdsToBeApproved }}"
     concurrencyLimit: 1
     runIf: "{{ inputs.action == 'Approve' and (inputs.executionIdsToBeApproved ?? false) }}"
     tasks:
       - id: approve
         type: io.kestra.plugin.core.http.Request
-        uri: https://partners.kestra.cloud/api/v1/demo/executions/{{ taskrun.value }}/resume
+        uri: https://partners.kestra.cloud/api/v1/demo/executions/{{ item.value }}/resume
         headers:
           Authorization: "Bearer {{ secret('KESTRA_CLOUD_API_TOKEN')}}"
         method: POST

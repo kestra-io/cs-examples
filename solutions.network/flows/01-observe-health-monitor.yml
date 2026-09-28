@@ -23,7 +23,7 @@ inputs:
 
 tasks:
   - id: probe_zones_in_parallel
-    type: io.kestra.plugin.core.flow.EachParallel
+    type: io.kestra.plugin.core.flow.Loop
     description: |
       **Why parallel?**
       Sequential probing of 6 zones at 5s/probe = 30 seconds per cycle.
@@ -42,9 +42,9 @@ tasks:
         type: io.kestra.plugin.core.http.Request
         description: |
           Simulates ICMP/TCP reachability via HTTP.
-          Zone name and region are embedded in the task label via taskrun.value.
+          Zone name and region are embedded in the task label via item.value.
           allowFailure: true ensures one unreachable zone doesn't abort the entire check cycle.
-        uri: "{{ taskrun.value | jq('.endpoint') | first }}"
+        uri: "{{ item.value | jq('.endpoint') | first }}"
         method: GET
         allowFailure: true
 

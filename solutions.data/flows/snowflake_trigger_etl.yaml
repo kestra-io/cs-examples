@@ -36,17 +36,17 @@ errors:
 
 tasks:
   - id: each
-    type: io.kestra.plugin.core.flow.ForEach
+    type: io.kestra.plugin.core.flow.Loop
     values: "{{trigger.rows}}"
     concurrencyLimit: 2
     tasks:    
     - id: jsonToIon
       type: io.kestra.plugin.serdes.json.JsonToIon
-      from: "{{taskrun.value}}"
+      from: "{{item.value}}"
       newLine: false
     - id: insert_raw_data
       type: io.kestra.plugin.jdbc.postgresql.Batch
-      from: "{{outputs.jsonToIon[taskrun.value].uri}}"
+      from: "{{outputs.jsonToIon.uri}}"
       url: "{{secret('JDBC_CONNECTION_STRING')}}"
       username: "{{secret('PG_USERNAME')}}"
       password: "{{secret('PG_PASSWORD')}}"

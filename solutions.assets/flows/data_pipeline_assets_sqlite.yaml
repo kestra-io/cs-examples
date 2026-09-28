@@ -45,7 +45,7 @@ tasks:
             model_layer: staging
             
   - id: for_each
-    type: io.kestra.plugin.core.flow.ForEach
+    type: io.kestra.plugin.core.flow.Loop
     values:
       - passenger_count
       - trip_distance
@@ -56,13 +56,13 @@ tasks:
         sqliteFile: "{{ outputs.create_staging_layer_asset.databaseUri }}"
         outputDbFile: true
         sql: |
-          CREATE TABLE IF NOT EXISTS avg_{{taskrun.value}} AS
-          SELECT AVG({{taskrun.value}}) AS avg_{{taskrun.value}} FROM trips;
+          CREATE TABLE IF NOT EXISTS avg_{{item.value}} AS
+          SELECT AVG({{item.value}}) AS avg_{{item.value}} FROM trips;
         assets:
           inputs:
             - id: trips
           outputs:
-            - id: avg_{{taskrun.value}}
+            - id: avg_{{item.value}}
               type: io.kestra.plugin.ee.assets.Table
               namespace: "{{flow.namespace}}"
               metadata:
@@ -76,12 +76,12 @@ tasks:
     format: '{{ assets(metadata={"model_layer": "mart"}) }}'
     
   - id: update_downstream_assets
-    type: io.kestra.plugin.core.flow.ForEach
+    type: io.kestra.plugin.core.flow.Loop
     values: '{{ assets(metadata={"model_layer": "mart"}) | jq(".[].id") }}'
     tasks:
       - id: log_table
         type: io.kestra.plugin.core.log.Log
-        message: "Asset Table: {{ taskrun.value }}"
+        message: "Asset Table: {{ item.value }}"
 
       - id: update_mart_assets
         type: io.kestra.plugin.jdbc.sqlite.Queries

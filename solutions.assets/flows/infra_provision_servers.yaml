@@ -15,17 +15,17 @@ tasks:
       - server_manifest.json
 
   - id: provision_servers
-    type: io.kestra.plugin.core.flow.ForEach
+    type: io.kestra.plugin.core.flow.Loop
     values: '{{ read(outputs.read_server_manifest["files"]["/server_manifest.json"]) }}'
     tasks:
       - id: parse_server_details
         type: io.kestra.plugin.core.execution.SetVariables
         variables:
-          server_id: "{{ fromJson(taskrun.value).id }}"
-          server_ip: "{{ fromJson(taskrun.value).ip }}"
-          server_os: "{{ fromJson(taskrun.value).os }}"
-          server_env: "{{ fromJson(taskrun.value).env }}"
-          python_version: "{{ fromJson(taskrun.value).python_version }}"
+          server_id: "{{ fromJson(item.value).id }}"
+          server_ip: "{{ fromJson(item.value).ip }}"
+          server_os: "{{ fromJson(item.value).os }}"
+          server_env: "{{ fromJson(item.value).env }}"
+          python_version: "{{ fromJson(item.value).python_version }}"
 
       - id: terraform_apply
         type: io.kestra.plugin.scripts.shell.Commands

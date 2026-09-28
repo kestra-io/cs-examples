@@ -49,7 +49,7 @@ tasks:
       apiToken: "{{ secret('kestra-api-token') }}"
 
   - id: scan_each_flow
-    type: io.kestra.plugin.core.flow.ForEach
+    type: io.kestra.plugin.core.flow.Loop
     description: Iterate through each discovered flow and analyze its definition.
     values: "{{ outputs.list_flows_in_namespace.flows }}"
     tasks:
@@ -77,14 +77,14 @@ tasks:
         prompt: |
           Analyze the following Kestra flow definition:
           
-                   {{ taskrun.value | toYaml }}
+                   {{ item.value | toYaml }}
                    
       - id: log_scan_result
         type: io.kestra.plugin.core.log.Log
         message: |
           --- Flow Scan Report ---
-          Flow ID: {{ taskrun.value.id }}
-          Namespace: {{ taskrun.value.namespace }}
+          Flow ID: {{ item.value.id }}
+          Namespace: {{ item.value.namespace }}
           AI Agent Scan Output:
           {{ outputs.ai_agent_scan.textOutput }}
           ------------------------

@@ -29,17 +29,17 @@ tasks:
       }}
 
   - id: run_upgrades
-    type: io.kestra.plugin.core.flow.ForEach
+    type: io.kestra.plugin.core.flow.Loop
     values: "{{ outputs.query_assets.value }}"
     tasks:
       - id: get_server_details
         type: io.kestra.plugin.core.execution.SetVariables
         variables:
-          server_id: "{{ fromJson(taskrun.value).id }}"
-          server_ip: "{{ fromJson(taskrun.value).metadata.ip_address }}"
-          python_version: "{{ fromJson(taskrun.value).metadata.python_version }}"
-          server_env: "{{ fromJson(taskrun.value).metadata.env }}"
-          server_os: "{{ fromJson(taskrun.value).metadata.os }}"
+          server_id: "{{ fromJson(item.value).id }}"
+          server_ip: "{{ fromJson(item.value).metadata.ip_address }}"
+          python_version: "{{ fromJson(item.value).metadata.python_version }}"
+          server_env: "{{ fromJson(item.value).metadata.env }}"
+          server_os: "{{ fromJson(item.value).metadata.os }}"
 
       - id: ssh_python_update
         type: io.kestra.plugin.scripts.shell.Commands
