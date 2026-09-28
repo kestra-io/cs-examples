@@ -80,7 +80,7 @@ tasks:
   # 2. One VM asset per host. Set is an upsert, so re-running refreshes metadata
   #    in place rather than creating duplicates.
   - id: register_assets
-    type: io.kestra.plugin.core.flow.Loop
+    type: io.kestra.plugin.core.flow.ForEach
     values: "{{ read(outputs.resolve_inventory.outputFiles['hosts.json']) }}"
     tasks:
       - id: upsert
@@ -88,21 +88,21 @@ tasks:
         # Required on containerised deployments: the task runs in the worker, where
         # kestra.url (a browser-facing URL) is not reachable. Use the internal address.
         kestraUrl: http://kestra-webserver:8080
-        assetId: "{{ fromJson(item.value).id }}"
+        assetId: "{{ fromJson(taskrun.value).id }}"
         assetType: io.kestra.plugin.ee.assets.VM
         namespace: company.infra
-        displayName: "{{ fromJson(item.value).id }}"
-        assetDescription: "Managed by Ansible. IP {{ fromJson(item.value).ip }}."
+        displayName: "{{ fromJson(taskrun.value).id }}"
+        assetDescription: "Managed by Ansible. IP {{ fromJson(taskrun.value).ip }}."
         auth:
           apiToken: "{{ secret('KESTRA_API_TOKEN') }}"
         metadata:
-          provider: "{{ fromJson(item.value).cloud }}"
-          region: "{{ fromJson(item.value).region }}"
-          state: "{{ fromJson(item.value).state }}"
-          os: "{{ fromJson(item.value).os }}"
-          os_family: "{{ fromJson(item.value).os_family }}"
-          patch_status: "{{ fromJson(item.value).patch_status }}"
-          last_patched: "{{ fromJson(item.value).last_patched }}"
-          cert_expiry: "{{ fromJson(item.value).cert_expiry }}"
-          cert_status: "{{ fromJson(item.value).cert_status }}"
-          cert_days_remaining: "{{ fromJson(item.value).cert_days_remaining }}"
+          provider: "{{ fromJson(taskrun.value).cloud }}"
+          region: "{{ fromJson(taskrun.value).region }}"
+          state: "{{ fromJson(taskrun.value).state }}"
+          os: "{{ fromJson(taskrun.value).os }}"
+          os_family: "{{ fromJson(taskrun.value).os_family }}"
+          patch_status: "{{ fromJson(taskrun.value).patch_status }}"
+          last_patched: "{{ fromJson(taskrun.value).last_patched }}"
+          cert_expiry: "{{ fromJson(taskrun.value).cert_expiry }}"
+          cert_status: "{{ fromJson(taskrun.value).cert_status }}"
+          cert_days_remaining: "{{ fromJson(taskrun.value).cert_days_remaining }}"
