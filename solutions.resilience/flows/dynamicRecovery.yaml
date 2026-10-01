@@ -6,7 +6,8 @@ description: |
   1. automaticRestartFlakyApi — flaky task that succeeds after automatic retries
   2. deployWithRollback       — rollback on a failed downstream check
   3. restartFlakySystem       — automatic recovery (restart + poll until healthy)
-  4. guaranteedFailureSLA     — shell task sleeps past the SLA window on purpose
+  4. approve_prod_change      - human approval gate before the prod change
+  5. guaranteedFailureSLA     — shell task sleeps past the SLA window on purpose
 
   RCA (step 4 of the original 5) now lives in its own flow: investigateFailure.yaml,
   fired via a Flow trigger the moment this flow is CANCELLED by its own SLA below.
@@ -117,7 +118,37 @@ tasks:
     type: io.kestra.plugin.core.log.Log
     message: "✅ flaky-service confirmed healthy after self-recovery via subflow"
 
-  # --- 4. GUARANTEED FAILURE -> SLA BREACH ---
+  # --- 4. PRODUCTION CHANGE APPROVAL ---
+  # Human gate before touching prod. Paused time counts toward the flow's
+  # MAX_DURATION SLA, so the pause auto-resumes (approves) after a fixed 20s
+  # to keep demo timing predictable. Resume early to approve or reject by hand;
+  # a rejection lands in FAILED via reject_change, so the RCA flow won't fire.
+  # Auto-resume skips onResume entirely (no outputs, defaults not applied),
+  # hence the `??` fallbacks below.
+  - id: approve_prod_change
+    type: io.kestra.plugin.core.flow.Pause
+    pauseDuration: PT20S
+    behavior: RESUME
+    onPause:
+      id: request_approval
+      type: io.kestra.plugin.core.log.Log
+      message: "⏸️ Approval needed on execution {{ execution.id }}: open it and click Resume within 20s, or it auto-approves"
+    onResume:
+      - id: approved
+        description: Approve the production change?
+        type: BOOL
+        defaults: true
+      - id: reason
+        description: Reason for approval or rejection
+        type: STRING
+        defaults: "Approved for prod"
+
+  - id: reject_change
+    type: io.kestra.plugin.core.execution.Fail
+    runIf: "{{ (outputs.approve_prod_change.onResume.approved ?? true) == false }}"
+    errorMessage: "Production change rejected: {{ outputs.approve_prod_change.onResume.reason ?? 'no reason given' }}"
+
+  # --- 5. GUARANTEED FAILURE -> SLA BREACH ---
   # Sleeps well past the SLA window on purpose — this is the exact line the
   # RCA in investigateFailure.yaml points back to. Live fix: drop `sleep 60`
   # to `sleep 5` (comfortably under the SLA below) and hit Replay on this
@@ -135,13 +166,15 @@ errors:
       🚨 Flow {{ flow.id }} failed at task {{ task.id }}
       {{ errorLogs() }}
 
-# tasks 1-3 land around ~50-60s typical, so `sleep 60` (task 4) pushes the
-# total to ~110-120s — clears this 90s SLA with room to spare. `sleep 5`
-# (the live fix) keeps the total around ~55-65s, comfortably under it.
+# tasks 1-3 land around ~50-60s typical, plus a fixed 20s auto-approval in
+# approve_prod_change (less only if someone clicks Resume early). `sleep 60`
+# (task 5) pushes the total to ~130s, and still ~110s with an instant manual
+# approval, so it breaches this 100s SLA either way. `sleep 5` (the live fix)
+# lands around ~75-90s, under it.
 sla:
   - id: resilience_demo_sla
     type: MAX_DURATION
-    duration: PT90S
+    duration: PT100S
     behavior: CANCEL
     labels:
       sla: breach
