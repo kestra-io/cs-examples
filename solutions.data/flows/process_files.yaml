@@ -8,6 +8,7 @@ policyRefs:
 
 triggers:
   - id: daily
+    disabled: true
     type: io.kestra.plugin.core.trigger.Schedule
     cron: "@daily"
     timezone: Europe/Paris

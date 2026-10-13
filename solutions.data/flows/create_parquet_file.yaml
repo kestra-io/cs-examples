@@ -3,6 +3,7 @@ namespace: solutions.data
 
 triggers:
   - id: aws
+    disabled: true
     type: io.kestra.plugin.aws.s3.Trigger
     action: MOVE
     bucket: "{{namespace.bucket}}"

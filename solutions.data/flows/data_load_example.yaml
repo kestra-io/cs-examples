@@ -13,6 +13,7 @@ labels:
 
 triggers:
   - id: pg_trigger
+    disabled: true
     type: io.kestra.plugin.jdbc.postgresql.Trigger
     url: "{{secret('JDBC_CONNECTION_STRING')}}"
     sql: "select * from staging_data"

@@ -140,6 +140,7 @@ errors:
 
 triggers:
   - id: poll_pending_changes
+    disabled: true
     type: io.kestra.plugin.core.http.Trigger
     uri: "{{ kv('SNOW_INSTANCE_URL') }}/api/now/table/change_request"
     method: GET
