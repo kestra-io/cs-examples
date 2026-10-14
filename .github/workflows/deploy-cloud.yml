@@ -1,0 +1,23 @@
+name: Deploy to Kestra Cloud
+
+# Starts deploy-cloud.yaml in kestra-io/customer-success, which bumps its
+# submodule to this commit and applies it to the cloud instance.
+#
+# CS_DEPLOY_TRIGGER_TOKEN is a fine-grained PAT with Actions: read and write on
+# customer-success only. This repo is public and anyone who can edit its
+# workflows can read that secret, so it must not be able to change code there.
+on:
+  push:
+    branches: [main]
+
+jobs:
+  trigger:
+    runs-on: ubuntu-latest
+    permissions: {}
+    steps:
+      - name: Start the customer-success deploy
+        env:
+          GH_TOKEN: ${{ secrets.CS_DEPLOY_TRIGGER_TOKEN }}
+        run: |
+          gh workflow run deploy-cloud.yaml --repo kestra-io/customer-success --ref main
+          echo "Started deploy for cs-examples ${GITHUB_SHA::7}: https://github.com/kestra-io/customer-success/actions/workflows/deploy-cloud.yaml" >> "$GITHUB_STEP_SUMMARY"
