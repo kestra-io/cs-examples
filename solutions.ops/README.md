@@ -78,10 +78,8 @@ You can also put the secret on a parent namespace, such as `solutions`, so that 
 
 ### 3. Deploy the flow
 
-- **From this repo:** a merge to `main` deploys to the CS Cloud instance automatically.
-- **Anywhere else:**
-  - In the UI, open **Flows → Create** and paste the YAML.
-  - From the API:
+- In the UI, open **Flows → Create** and paste the YAML.
+- From the API:
 
 ```bash
 curl -X POST "https://<your-kestra>/api/v1/<tenant>/flows" \
