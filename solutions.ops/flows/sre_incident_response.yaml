@@ -268,4 +268,5 @@ triggers:
 
   - id: alert_webhook
     type: io.kestra.plugin.core.trigger.Webhook
-    key: sre-demo-7f3c9a
+    # Webhooks have no other auth: the key is the only protection, so keep it in a secret
+    key: "{{ secret('RF_SRE_WEBHOOK_KEY') }}"

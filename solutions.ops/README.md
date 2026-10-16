@@ -56,22 +56,28 @@ Use a **service account**, not a personal API key. Otherwise every case shows up
    - `VIEW`
 3. Generate an API token for the service account and copy it.
 
-### 2. Store the token as a secret
+### 2. Create the secrets
 
-Go to **Namespaces → `solutions.ops` → Secrets → Add** and create:
+Go to **Namespaces → `solutions.ops` → Secrets → Add** and create both of these:
 
-| Key | Value |
-|---|---|
-| `KESTRA_API_TOKEN` | the token from step 1 |
+| Key | Value | Used by |
+|---|---|---|
+| `KESTRA_API_TOKEN` | the token from step 1 | `open_p0_case`, to call the Kestra API |
+| `RF_SRE_WEBHOOK_KEY` | a long random string, e.g. from `openssl rand -hex 24` | the `alert_webhook` trigger key |
 
-The flow reads it with:
+The flow reads them with:
 
 ```yaml
 auth:
   apiToken: "{{ secret('KESTRA_API_TOKEN') }}"
+...
+key: "{{ secret('RF_SRE_WEBHOOK_KEY') }}"
 ```
 
-You can also put the secret on a parent namespace, such as `solutions`, so that other flows can share it.
+You can also put the secrets on a parent namespace, such as `solutions`, so that other flows can share them.
+
+> [!NOTE]
+> The webhook key is a secret because webhooks have no other authentication: anyone who knows the URL can start the flow. Prefix secret names with your initials (here `RF_`) on shared instances so they don't collide with other people's secrets.
 
 > [!TIP]
 > **Alternative:** an admin can set **Default authentication credentials** on the namespace or tenant, when editing it. `CreateCase` then authenticates without any configuration on the task, and you can delete the `auth:` block from the flow.
@@ -107,9 +113,9 @@ variables:
 | Trigger | Default | Notes |
 |---|---|---|
 | `hourly_health_check` | **disabled** | Enable it in the UI during the demo. It's off by default so it doesn't use up executions. |
-| `alert_webhook` | enabled | `POST https://<your-kestra>/api/v1/<tenant>/executions/webhook/solutions.ops/sre_incident_response/sre-demo-7f3c9a` |
+| `alert_webhook` | enabled | `POST https://<your-kestra>/api/v1/<tenant>/executions/webhook/solutions.ops/sre_incident_response/<RF_SRE_WEBHOOK_KEY value>` |
 
-Change the webhook `key` before using the flow outside a demo instance. Anyone who knows the key can trigger the flow.
+Share the webhook URL only with the tools that need to call it, since it contains the secret key.
 
 ---
 
@@ -158,5 +164,6 @@ The P0 case includes:
 |---|---|
 | `open_p0_case` fails with `401 Authentication required` | `KESTRA_API_TOKEN` is missing or invalid, or no default credentials are set. Go back to Setup steps 1 and 2. |
 | `open_p0_case` fails with `403` | The service account is missing `CASE` `CREATE` or `UPDATE` on the namespace. |
-| `Cannot find secret KESTRA_API_TOKEN` | The secret was created in a different namespace. Create it on `solutions.ops` or a parent namespace. |
+| `Cannot find secret KESTRA_API_TOKEN` or `RF_SRE_WEBHOOK_KEY` | The secret was created in a different namespace. Create it on `solutions.ops` or a parent namespace. |
+| Webhook call returns `404` | The key in the URL doesn't match the `RF_SRE_WEBHOOK_KEY` secret, or the secret is missing. |
 | `Unrecognized field "pluginDefaults"` when deploying | You're deploying an older copy to Kestra 2.0. This flow doesn't use `pluginDefaults`, so redeploy from this file. |
