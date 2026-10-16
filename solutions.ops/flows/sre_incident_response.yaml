@@ -1,0 +1,272 @@
+id: sre_incident_response
+namespace: solutions.ops
+description: |
+  **SRE incident response & automation demo**
+
+  One flow covering common SRE automation use cases:
+  1. Scheduled database health checks (advanced monitoring) with retries
+  2. Incident response: open an alert in the incident tool + auto-remediation when a check fails
+  3. Restaurant configuration data sync into the incident tool (Python)
+  4. P0 case opened in Kestra on failure, webhook trigger (no inbound firewall holes), hourly schedule
+
+  Every Python task runs in its own container with its own pinned dependencies and Python version.
+  No more shared runbook workers stuck on an old Python version.
+
+labels:
+  team: sre
+  use_case: incident-response
+
+inputs:
+  - id: environment
+    type: SELECT
+    displayName: Environment
+    values:
+      - prod
+      - staging
+    defaults: prod
+
+  - id: simulate_incident
+    type: BOOL
+    displayName: Simulate a degraded database
+    description: Flip this on during the demo to walk through the incident-response branch.
+    defaults: false
+
+  - id: simulate_remediation_failure
+    type: BOOL
+    displayName: Simulate failed auto-remediation
+    description: With a degraded database, make auto-remediation fail so the flow opens a P0 case.
+    defaults: false
+    dependsOn:
+      inputs:
+        - simulate_incident
+      condition: "{{ inputs.simulate_incident == true }}"
+
+  - id: latency_threshold_ms
+    type: INT
+    displayName: Latency threshold (ms)
+    defaults: 250
+
+variables:
+  # Swap these for the customer's tool (BigPanda, PagerDuty, Opsgenie, ServiceNow, ...)
+  incident_tool:
+    name: Incident Tool
+    alerts_url: https://incident-tool.example.com/api/v1/alerts
+    source_key: sre-kestra-demo
+  databases:
+    - orders-db
+    - menu-db
+    - loyalty-db
+    - payments-db
+    - restaurant-config-db
+
+tasks:
+  - id: db_health_check
+    type: io.kestra.plugin.scripts.python.Script
+    containerImage: python:3.12-slim
+    description: Repeated database health queries (replaces legacy runbook automation)
+    retry:
+      type: constant
+      maxAttempts: 3
+      interval: PT10S
+    dependencies:
+      - kestra
+    env:
+      ENVIRONMENT: "{{ inputs.environment }}"
+      DATABASES: "{{ vars.databases | join(',') }}"
+      SIMULATE_INCIDENT: "{{ inputs.simulate_incident }}"
+      LATENCY_THRESHOLD_MS: "{{ inputs.latency_threshold_ms }}"
+    script: |
+      import os, random, sys
+      from kestra import Kestra
+
+      env = os.environ["ENVIRONMENT"]
+      threshold = int(os.environ["LATENCY_THRESHOLD_MS"])
+      simulate = os.environ["SIMULATE_INCIDENT"].lower() == "true"
+      dbs = os.environ["DATABASES"].split(",")
+
+      print(f"Python {sys.version.split()[0]} | env={env} | threshold={threshold}ms")
+
+      results = []
+      for db in dbs:
+          latency = random.randint(20, 120)
+          connections = random.randint(40, 180)
+          if simulate and db == "orders-db":
+              latency, connections = random.randint(800, 1500), 498
+          healthy = latency < threshold and connections < 450
+          results.append({"db": db, "latency_ms": latency, "connections": connections, "healthy": healthy})
+          print(f"{'OK  ' if healthy else 'FAIL'} {db:<22} latency={latency}ms connections={connections}")
+          Kestra.timer(f"latency.{db}", latency / 1000)
+
+      unhealthy = [r for r in results if not r["healthy"]]
+      Kestra.counter("unhealthy_databases", len(unhealthy), {"env": env})
+      Kestra.outputs({"results": results, "unhealthy": unhealthy, "unhealthy_count": len(unhealthy)})
+
+  - id: incident_router
+    type: io.kestra.plugin.core.flow.If
+    condition: "{{ outputs.db_health_check.vars.unhealthy_count > 0 }}"
+    then:
+      - id: open_incident_alert
+        type: io.kestra.plugin.scripts.python.Script
+        containerImage: python:3.12-slim
+        description: Push a critical alert to the incident tool (dry run for the demo)
+        dependencies:
+          - kestra
+          - requests
+        env:
+          ENVIRONMENT: "{{ inputs.environment }}"
+          UNHEALTHY: "{{ outputs.db_health_check.vars.unhealthy | toJson }}"
+          SOURCE_KEY: "{{ vars.incident_tool.source_key }}"
+          ALERTS_URL: "{{ vars.incident_tool.alerts_url }}"
+          TOOL_NAME: "{{ vars.incident_tool.name }}"
+          EXECUTION_URL: "{{ kestra.url }}/ui/main/executions/{{ flow.namespace }}/{{ flow.id }}/{{ execution.id }}"
+        script: |
+          import json, os
+          from kestra import Kestra
+
+          alerts = []
+          for db in json.loads(os.environ["UNHEALTHY"]):
+              alerts.append({
+                  "source": os.environ["SOURCE_KEY"],
+                  "status": "critical",
+                  "host": db["db"],
+                  "check": "kestra-db-health",
+                  "description": f"{db['db']} latency {db['latency_ms']}ms, {db['connections']} connections",
+                  "environment": os.environ["ENVIRONMENT"],
+                  "runbook_url": os.environ["EXECUTION_URL"],
+              })
+
+          # In production: requests.post(os.environ["ALERTS_URL"],
+          #   headers={"Authorization": f"Bearer {secret}"}, json=alert)
+          for a in alerts:
+              print(f"[DRY RUN] {os.environ['TOOL_NAME']}: POST {os.environ['ALERTS_URL']}")
+              print(json.dumps(a, indent=2))
+          Kestra.outputs({"alerts_sent": len(alerts)})
+
+      - id: auto_remediate
+        type: io.kestra.plugin.scripts.python.Script
+        containerImage: python:3.12-slim
+        description: First-response remediation before paging a human
+        dependencies:
+          - kestra
+        env:
+          UNHEALTHY: "{{ outputs.db_health_check.vars.unhealthy | toJson }}"
+          SIMULATE_FAILURE: "{{ inputs.simulate_remediation_failure ?? false }}"
+        script: |
+          import json, os, sys, time
+          from kestra import Kestra
+
+          fail = os.environ["SIMULATE_FAILURE"].lower() == "true"
+          for db in json.loads(os.environ["UNHEALTHY"]):
+              print(f"[{db['db']}] terminating idle connections > 10 min ...")
+              time.sleep(1)
+              print(f"[{db['db']}] recycling connection pool ...")
+              time.sleep(1)
+              if fail:
+                  print(f"{db['db']}: latency still {db['latency_ms']}ms after pool recycle, "
+                        f"{db['connections']}/500 connections in use. Auto-remediation failed; escalating.",
+                        file=sys.stderr)
+                  sys.exit(1)
+              print(f"[{db['db']}] re-checking latency ... OK")
+          Kestra.outputs({"remediated": True})
+
+    else:
+      - id: all_healthy
+        type: io.kestra.plugin.core.log.Log
+        message: "All {{ vars.databases | length }} databases healthy in {{ inputs.environment }}"
+
+  - id: restaurant_config_sync
+    type: io.kestra.plugin.scripts.python.Script
+    description: Light data sync of restaurant configuration into the incident tool for alert enrichment
+    containerImage: python:3.13-slim
+    dependencies:
+      - kestra
+      - pydantic>=2
+    outputFiles:
+      - incident_tool_enrichment.json
+    script: |
+      import json, random
+      from pydantic import BaseModel
+      from kestra import Kestra
+
+      class Restaurant(BaseModel):
+          restaurant_id: str
+          region: str
+          pos_version: str
+          online_ordering: bool
+          digital_kitchen: bool
+
+      regions = ["Northeast", "Southeast", "Midwest", "Mountain", "Pacific"]
+      restaurants = [
+          Restaurant(
+              restaurant_id=f"STORE-{3000 + i}",
+              region=random.choice(regions),
+              pos_version=random.choice(["7.4.2", "7.5.0", "7.5.1"]),
+              online_ordering=True,
+              digital_kitchen=random.random() > 0.3,
+          )
+          for i in range(25)
+      ]
+
+      enrichment = [{"tag": "restaurant_id", "value": r.restaurant_id, **r.model_dump()} for r in restaurants]
+      with open("incident_tool_enrichment.json", "w") as f:
+          json.dump(enrichment, f, indent=2)
+
+      print(f"Synced {len(restaurants)} restaurant configs to the incident tool enrichment map (dry run)")
+      Kestra.counter("restaurants_synced", len(restaurants))
+      Kestra.outputs({"restaurants_synced": len(restaurants)})
+
+  - id: summary
+    type: io.kestra.plugin.core.log.Log
+    message: |
+      SRE run complete ({{ inputs.environment }}):
+      - unhealthy databases: {{ outputs.db_health_check.vars.unhealthy_count }}
+      - restaurants synced: {{ outputs.restaurant_config_sync.vars.restaurants_synced }}
+
+errors:
+  - id: open_p0_case
+    type: io.kestra.plugin.kestra.ee.cases.CreateCase
+    auth:
+      apiToken: "{{ secret('RF_KESTRA_API_TOKEN') }}"
+    title: "[P0] {{ flow.id }} failed in {{ inputs.environment }}"
+    severity: CRITICAL
+    linkMatchingExecutions: true
+    sla:
+      acknowledgement: PT15M
+      resolution: PT4H
+    labels:
+      priority: P0
+      team: sre
+      environment: "{{ inputs.environment }}"
+    caseDescription: |
+      ## P0: SRE automation failure
+
+      | | |
+      |---|---|
+      | **Flow** | `{{ flow.namespace }}.{{ flow.id }}` |
+      | **Execution** | [{{ execution.id }}]({{ kestra.url }}/ui/main/executions/{{ flow.namespace }}/{{ flow.id }}/{{ execution.id }}) |
+      | **Environment** | {{ inputs.environment }} |
+      | **Started** | {{ execution.startDate }} |
+      | **Failed tasks** | {% for t in tasksWithState('FAILED') %}`{{ t.taskId }}` {% endfor %} |
+      | **Unhealthy databases** | {% if outputs.db_health_check is defined %}{% for d in outputs.db_health_check.vars.unhealthy %}`{{ d.db }}` ({{ d.latency_ms }}ms, {{ d.connections }} conns) {% endfor %}{% else %}n/a{% endif %} |
+
+      ### Error logs
+      ```
+      {% for l in errorLogs() %}[{{ l.taskId }}] {{ l.message }}
+      {% endfor %}
+      ```
+
+      ### Next steps
+      1. Acknowledge within 15 minutes.
+      2. Check the incident tool alert opened by `open_incident_alert`.
+      3. Re-run the flow from the failed task once mitigated.
+
+triggers:
+  - id: hourly_health_check
+    type: io.kestra.plugin.core.trigger.Schedule
+    cron: "0 * * * *"
+    disabled: true
+
+  - id: alert_webhook
+    type: io.kestra.plugin.core.trigger.Webhook
+    # Webhooks have no other auth: the key is the only protection, so keep it in a secret
+    key: "{{ secret('RF_SRE_WEBHOOK_KEY') }}"
