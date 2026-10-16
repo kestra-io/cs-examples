@@ -226,7 +226,7 @@ errors:
   - id: open_p0_case
     type: io.kestra.plugin.kestra.ee.cases.CreateCase
     auth:
-      apiToken: "{{ secret('KESTRA_API_TOKEN') }}"
+      apiToken: "{{ secret('RF_KESTRA_API_TOKEN') }}"
     title: "[P0] {{ flow.id }} failed in {{ inputs.environment }}"
     severity: CRITICAL
     linkMatchingExecutions: true

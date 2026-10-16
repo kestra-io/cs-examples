@@ -62,14 +62,14 @@ Go to **Namespaces → `solutions.ops` → Secrets → Add** and create both of 
 
 | Key | Value | Used by |
 |---|---|---|
-| `KESTRA_API_TOKEN` | the token from step 1 | `open_p0_case`, to call the Kestra API |
+| `RF_KESTRA_API_TOKEN` | the token from step 1 | `open_p0_case`, to call the Kestra API |
 | `RF_SRE_WEBHOOK_KEY` | a long random string, e.g. from `openssl rand -hex 24` | the `alert_webhook` trigger key |
 
 The flow reads them with:
 
 ```yaml
 auth:
-  apiToken: "{{ secret('KESTRA_API_TOKEN') }}"
+  apiToken: "{{ secret('RF_KESTRA_API_TOKEN') }}"
 ...
 key: "{{ secret('RF_SRE_WEBHOOK_KEY') }}"
 ```
@@ -162,8 +162,8 @@ The P0 case includes:
 
 | Symptom | Fix |
 |---|---|
-| `open_p0_case` fails with `401 Authentication required` | `KESTRA_API_TOKEN` is missing or invalid, or no default credentials are set. Go back to Setup steps 1 and 2. |
+| `open_p0_case` fails with `401 Authentication required` | `RF_KESTRA_API_TOKEN` is missing or invalid, or no default credentials are set. Go back to Setup steps 1 and 2. |
 | `open_p0_case` fails with `403` | The service account is missing `CASE` `CREATE` or `UPDATE` on the namespace. |
-| `Cannot find secret KESTRA_API_TOKEN` or `RF_SRE_WEBHOOK_KEY` | The secret was created in a different namespace. Create it on `solutions.ops` or a parent namespace. |
+| `Cannot find secret RF_KESTRA_API_TOKEN` or `RF_SRE_WEBHOOK_KEY` | The secret was created in a different namespace. Create it on `solutions.ops` or a parent namespace. |
 | Webhook call returns `404` | The key in the URL doesn't match the `RF_SRE_WEBHOOK_KEY` secret, or the secret is missing. |
 | `Unrecognized field "pluginDefaults"` when deploying | You're deploying an older copy to Kestra 2.0. This flow doesn't use `pluginDefaults`, so redeploy from this file. |
