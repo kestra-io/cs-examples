@@ -1,0 +1,399 @@
+id: serviceNowCmdbCiChange
+namespace: solutions.ops
+labels:
+  - key: feature
+    value: servicenow
+  - key: domain
+    value: ops
+  - key: maintainer
+    value: caxe
+  - key: kestra.version
+    value: 2.0.8
+description: |
+  Create or update a CMDB CI under ServiceNow change control. Nothing touches the
+  CMDB until the change is approved in ServiceNow.
+
+  1. Pre-flight: the CI and owner picked in the form still exist (and a new CI name
+     is not taken).
+  2. Opens a normal change_request carrying a before/after diff as the backout plan,
+     then requests approval (moves it to Assess, which generates the approver records).
+  3. Polls the change until it is approved or rejected. Anything other than
+     "approved" stops the run.
+  4. Writes the CI, reads it back and asserts every field landed (the Table API
+     drops unknown or ACL-blocked fields without an error).
+  5. Walks the change through Implement and Review to Closed, with the approver,
+     the CI diff and the Kestra execution link in the work notes.
+  On failure the errors branch cancels the change if the CMDB was not touched, or
+  leaves a work note for review if it was.
+
+  ServiceNow prerequisites:
+  - integration user with read/write on change_request and the CI classes, read on
+    sys_user, sys_user_group and sysapproval_approver, plus role
+    snc_basic_auth_api_access on instances enforcing the Basic Auth restriction
+  - secrets SNOW_USERNAME / SNOW_PASSWORD, KV key SNOW_DOMAIN
+    (subdomain only, e.g. dev12345 for https://dev12345.service-now.com)
+
+  Notes:
+  - always keyed on sys_id; change numbers are not guaranteed unique
+  - normal change model: two approval rounds (Assess, then Authorize/CAB)
+  - plugin-servicenow 1.6.x needs Kestra >= 2.0.5; Kestra 2.0.3 bundles 1.4.6, whose
+    Post only outputs `result`, hence result.sys_id / result.number below
+  - connection fields are inlined per task (pluginDefaults is gone in 2.0; on EE a
+    Policy can inject them instead)
+  - plain Table API writes bypass IRE. If Discovery / Service Graph also populate
+    these classes, creates can duplicate; use /api/now/identifyreconcile then
+
+inputs:
+  - id: action
+    type: SELECT
+    displayName: Action
+    values:
+      - label: Create a new CI
+        value: create
+      - label: Update an existing CI
+        value: update
+    defaults: create
+
+  - id: ci_class
+    type: SELECT
+    displayName: CI class
+    values:
+      - label: Linux server
+        value: cmdb_ci_linux_server
+      - label: Windows server
+        value: cmdb_ci_win_server
+      - label: Database instance
+        value: cmdb_ci_db_instance
+    defaults: cmdb_ci_linux_server
+
+  - id: ci_name
+    type: STRING
+    displayName: New CI name
+    description: Name of the CI to create.
+    dependsOn:
+      inputs: [action]
+      condition: "{{ inputs.action == 'create' }}"
+
+  - id: existing_ci
+    type: SELECT
+    displayName: CI
+    description: CI to update, read live from the CMDB.
+    dependsOn:
+      inputs: [action, ci_class]
+      condition: "{{ inputs.action == 'update' }}"
+    expression: >-
+      {{ http(uri = 'https://' ~ kv('SNOW_DOMAIN') ~ '.service-now.com/api/now/table/' ~ inputs.ci_class,
+              query = {'sysparm_query': 'ORDERBYname', 'sysparm_fields': 'sys_id,name,ip_address', 'sysparm_limit': '200'},
+              options = {'auth': {'type': 'BASIC', 'username': secret('SNOW_USERNAME'), 'password': secret('SNOW_PASSWORD')}})
+         | jq('.result[] | {label: (.name + (if .ip_address != "" then " (" + .ip_address + ")" else "" end)), value: .sys_id}') }}
+
+  - id: new_name
+    type: STRING
+    displayName: Rename to
+    description: Leave empty to keep the current name.
+    required: false
+    dependsOn:
+      inputs: [action]
+      condition: "{{ inputs.action == 'update' }}"
+
+  - id: owner
+    type: SELECT
+    displayName: Owner
+    description: Owned by, read live from ServiceNow users.
+    expression: >-
+      {{ http(uri = 'https://' ~ kv('SNOW_DOMAIN') ~ '.service-now.com/api/now/table/sys_user',
+              query = {'sysparm_query': 'active=true^emailISNOTEMPTY^ORDERBYname', 'sysparm_fields': 'sys_id,name,email', 'sysparm_limit': '200'},
+              options = {'auth': {'type': 'BASIC', 'username': secret('SNOW_USERNAME'), 'password': secret('SNOW_PASSWORD')}})
+         | jq('.result[] | {label: (.name + " - " + .email), value: .sys_id}') }}
+
+  - id: ip_address
+    type: STRING
+    displayName: IP address
+    description: On update, leave empty to keep the current IP.
+    required: false
+
+  - id: assignment_group
+    type: SELECT
+    displayName: Change assignment group
+    description: Group the change is assigned to; its approval rules pick the approvers.
+    expression: >-
+      {{ http(uri = 'https://' ~ kv('SNOW_DOMAIN') ~ '.service-now.com/api/now/table/sys_user_group',
+              query = {'sysparm_query': 'active=true^ORDERBYname', 'sysparm_fields': 'sys_id,name', 'sysparm_limit': '200'},
+              options = {'auth': {'type': 'BASIC', 'username': secret('SNOW_USERNAME'), 'password': secret('SNOW_PASSWORD')}})
+         | jq('.result | sort_by(.name != "Change Management") | .[] | {label: .name, value: .sys_id}') }}
+    # not `defaults`: the form preview renders kv() in defaults as ****** (real runs are fine)
+    autoSelectFirst: true
+
+  - id: reason
+    type: STRING
+    displayName: Why
+    description: Justification the approvers read before deciding.
+    defaults: CMDB record maintenance requested through Kestra.
+
+tasks:
+  # ---------- pre-flight: nothing is written until these pass ----------
+  - id: owner_check
+    type: io.kestra.plugin.servicenow.Get
+    domain: "{{ kv('SNOW_DOMAIN') }}"
+    username: "{{ secret('SNOW_USERNAME') }}"
+    password: "{{ secret('SNOW_PASSWORD') }}"
+    table: sys_user
+    query: "sys_id={{ inputs.owner }}^active=true"
+    fields: [sys_id, name, email]
+
+  - id: target_check
+    type: io.kestra.plugin.servicenow.Get
+    domain: "{{ kv('SNOW_DOMAIN') }}"
+    username: "{{ secret('SNOW_USERNAME') }}"
+    password: "{{ secret('SNOW_PASSWORD') }}"
+    table: "{{ inputs.ci_class }}"
+    query: "{{ inputs.action == 'create' ? 'name=' ~ inputs.ci_name : 'sys_id=' ~ inputs.existing_ci }}"
+    fields: [sys_id, name, ip_address, owned_by.name]
+
+  - id: preflight
+    type: io.kestra.plugin.core.execution.Assert
+    errorMessage: |
+      Pre-flight failed, no change request was opened.
+      owner {{ inputs.owner }}: {{ outputs.owner_check.size == 1 ? 'ok' : 'not found or inactive' }}
+      {{ inputs.action == 'create'
+         ? (outputs.target_check.size == 0 ? 'name ' ~ inputs.ci_name ~ ': free' : 'name ' ~ inputs.ci_name ~ ' already exists in ' ~ inputs.ci_class ~ ' (sys_id ' ~ outputs.target_check.results[0].sys_id ~ ')')
+         : (outputs.target_check.size == 1 ? 'CI: ok' : 'CI ' ~ inputs.existing_ci ~ ' no longer exists in ' ~ inputs.ci_class) }}
+    conditions:
+      - "{{ outputs.owner_check.size == 1 }}"
+      - "{{ inputs.action == 'create' ? outputs.target_check.size == 0 : outputs.target_check.size == 1 }}"
+
+  # before/after, resolved once so the change, the write and the verify all agree
+  - id: plan
+    type: io.kestra.plugin.core.output.OutputValues
+    values:
+      ci_name: "{{ inputs.action == 'create' ? inputs.ci_name : ((inputs.new_name ?? '') != '' ? inputs.new_name : outputs.target_check.results[0].name) }}"
+      ip_address: "{{ (inputs.ip_address ?? '') != '' ? inputs.ip_address : (inputs.action == 'update' ? outputs.target_check.results[0].ip_address : '') }}"
+      owner_name: "{{ outputs.owner_check.results[0].name }}"
+      before: "{{ inputs.action == 'create' ? 'n/a (new CI)' : 'name=' ~ outputs.target_check.results[0].name ~ ', ip=' ~ outputs.target_check.results[0].ip_address ~ ', owner=' ~ outputs.target_check.results[0]['owned_by.name'] }}"
+
+  # ---------- change request + approval ----------
+  - id: change
+    type: io.kestra.plugin.servicenow.Post
+    domain: "{{ kv('SNOW_DOMAIN') }}"
+    username: "{{ secret('SNOW_USERNAME') }}"
+    password: "{{ secret('SNOW_PASSWORD') }}"
+    table: change_request
+    data:
+      type: normal
+      category: Hardware
+      short_description: "{{ inputs.action | capitalize }} CI {{ outputs.plan.values.ci_name }} ({{ inputs.ci_class }})"
+      description: "{{ inputs.reason }}"
+      justification: "{{ inputs.reason }}"
+      cmdb_ci: "{{ inputs.action == 'update' ? inputs.existing_ci : '' }}"
+      assignment_group: "{{ inputs.assignment_group }}"
+      start_date: "{{ now() | dateAdd(1, 'HOURS') | date('yyyy-MM-dd HH:mm:ss', timeZone='UTC') }}"
+      end_date: "{{ now() | dateAdd(2, 'HOURS') | date('yyyy-MM-dd HH:mm:ss', timeZone='UTC') }}"
+      implementation_plan: |-
+        Kestra flow {{ flow.namespace }}.{{ flow.id }}, execution {{ execution.id }}:
+        {{ inputs.action }} {{ inputs.ci_class }} with name={{ outputs.plan.values.ci_name }}, ip={{ outputs.plan.values.ip_address }}, owner={{ outputs.plan.values.owner_name }}
+      backout_plan: "Restore the previous values: {{ outputs.plan.values.before }}"
+      test_plan: Kestra reads the CI back and asserts every written field matches before closing the change.
+
+  - id: label
+    type: io.kestra.plugin.core.execution.Labels
+    labels:
+      snow_change: "{{ outputs.change.result.number }}"
+
+  # same as the "Request Approval" button: Assess generates the approver records
+  - id: request_approval
+    type: io.kestra.plugin.servicenow.Update
+    domain: "{{ kv('SNOW_DOMAIN') }}"
+    username: "{{ secret('SNOW_USERNAME') }}"
+    password: "{{ secret('SNOW_PASSWORD') }}"
+    table: change_request
+    sysId: "{{ outputs.change.result.sys_id }}"
+    data:
+      state: "-4"
+      work_notes: "Approval requested by Kestra. Execution: {{ kestra.url }}/ui/main/executions/{{ flow.namespace }}/{{ flow.id }}/{{ execution.id }}"
+
+  - id: wait_approval
+    type: io.kestra.plugin.core.flow.LoopUntil
+    condition: "{{ outputs.poll.results[0].approval == 'approved' or outputs.poll.results[0].approval == 'rejected' }}"
+    # default is false: a timeout would fall through and run the CI change unapproved
+    failOnMaxReached: true
+    checkFrequency:
+      interval: PT30S
+      maxDuration: P3D
+    tasks:
+      - id: poll
+        type: io.kestra.plugin.servicenow.Get
+        domain: "{{ kv('SNOW_DOMAIN') }}"
+        username: "{{ secret('SNOW_USERNAME') }}"
+        password: "{{ secret('SNOW_PASSWORD') }}"
+        table: change_request
+        query: "sys_id={{ outputs.change.result.sys_id }}"
+        fields: [approval, state]
+
+  # who decided, from the approval records rather than the change itself
+  - id: decision
+    type: io.kestra.plugin.servicenow.Get
+    domain: "{{ kv('SNOW_DOMAIN') }}"
+    username: "{{ secret('SNOW_USERNAME') }}"
+    password: "{{ secret('SNOW_PASSWORD') }}"
+    table: sysapproval_approver
+    query: "sysapproval={{ outputs.change.result.sys_id }}^stateINapproved,rejected^ORDERBYDESCsys_updated_on"
+    fields: [approver.name, state, comments, sys_updated_on]
+
+  - id: decided
+    type: io.kestra.plugin.core.output.OutputValues
+    values:
+      approval: "{{ outputs.poll.results[0].approval }}"
+      by: "{{ outputs.decision.size > 0 ? outputs.decision.results | jq('[.[] | .[\"approver.name\"] + \" (\" + .state + \")\"] | unique | join(\", \")') | first : 'unknown' }}"
+
+  # allow-list, not deny-list: anything but 'approved' stops here
+  - id: approved_gate
+    type: io.kestra.plugin.core.execution.Assert
+    errorMessage: "{{ outputs.change.result.number }} not approved (approval={{ outputs.decided.values.approval }}, decided by {{ outputs.decided.values.by }}). The CMDB was not touched."
+    conditions:
+      - "{{ outputs.decided.values.approval == 'approved' }}"
+
+  # ---------- implement ----------
+  - id: implement
+    type: io.kestra.plugin.servicenow.Update
+    domain: "{{ kv('SNOW_DOMAIN') }}"
+    username: "{{ secret('SNOW_USERNAME') }}"
+    password: "{{ secret('SNOW_PASSWORD') }}"
+    table: change_request
+    sysId: "{{ outputs.change.result.sys_id }}"
+    data:
+      state: "-1"
+      work_notes: "Approved by {{ outputs.decided.values.by }}. Kestra is applying the CMDB change."
+
+  - id: write_ci
+    type: io.kestra.plugin.core.flow.Switch
+    value: "{{ inputs.action }}"
+    cases:
+      create:
+        - id: create_ci
+          type: io.kestra.plugin.servicenow.Post
+          domain: "{{ kv('SNOW_DOMAIN') }}"
+          username: "{{ secret('SNOW_USERNAME') }}"
+          password: "{{ secret('SNOW_PASSWORD') }}"
+          table: "{{ inputs.ci_class }}"
+          data:
+            name: "{{ outputs.plan.values.ci_name }}"
+            owned_by: "{{ inputs.owner }}"
+            ip_address: "{{ outputs.plan.values.ip_address }}"
+      update:
+        - id: update_ci
+          type: io.kestra.plugin.servicenow.Update
+          domain: "{{ kv('SNOW_DOMAIN') }}"
+          username: "{{ secret('SNOW_USERNAME') }}"
+          password: "{{ secret('SNOW_PASSWORD') }}"
+          table: "{{ inputs.ci_class }}"
+          sysId: "{{ inputs.existing_ci }}"
+          data:
+            name: "{{ outputs.plan.values.ci_name }}"
+            owned_by: "{{ inputs.owner }}"
+            ip_address: "{{ outputs.plan.values.ip_address }}"
+
+  - id: ci
+    type: io.kestra.plugin.core.output.OutputValues
+    values:
+      sys_id: "{{ inputs.action == 'create' ? outputs.create_ci.result.sys_id : inputs.existing_ci }}"
+
+  # trust the record, not the 200: read it back and compare field by field
+  - id: read_back
+    type: io.kestra.plugin.servicenow.Get
+    domain: "{{ kv('SNOW_DOMAIN') }}"
+    username: "{{ secret('SNOW_USERNAME') }}"
+    password: "{{ secret('SNOW_PASSWORD') }}"
+    table: "{{ inputs.ci_class }}"
+    query: "sys_id={{ outputs.ci.values.sys_id }}"
+    fields: [sys_id, name, ip_address, owned_by.sys_id, owned_by.name, sys_updated_on]
+
+  - id: verify
+    type: io.kestra.plugin.core.execution.Assert
+    errorMessage: |
+      CMDB does not match what was approved in {{ outputs.change.result.number }}:
+        name   expected {{ outputs.plan.values.ci_name }}, got {{ outputs.read_back.results[0].name ?? 'missing' }}
+        ip     expected {{ outputs.plan.values.ip_address }}, got {{ outputs.read_back.results[0].ip_address ?? 'missing' }}
+        owner  expected {{ outputs.plan.values.owner_name }}, got {{ outputs.read_back.results[0]['owned_by.name'] ?? 'missing' }}
+    conditions:
+      - "{{ outputs.read_back.size == 1 }}"
+      - "{{ outputs.read_back.results[0].name == outputs.plan.values.ci_name }}"
+      - "{{ outputs.read_back.results[0].ip_address == outputs.plan.values.ip_address }}"
+      - "{{ outputs.read_back.results[0]['owned_by.sys_id'] == inputs.owner }}"
+
+  # ---------- close the change ----------
+  - id: review
+    type: io.kestra.plugin.servicenow.Update
+    domain: "{{ kv('SNOW_DOMAIN') }}"
+    username: "{{ secret('SNOW_USERNAME') }}"
+    password: "{{ secret('SNOW_PASSWORD') }}"
+    table: change_request
+    sysId: "{{ outputs.change.result.sys_id }}"
+    data:
+      state: "0"
+      work_notes: |-
+        CMDB change applied and verified by reading the record back.
+        CI: {{ inputs.ci_class }} {{ outputs.ci.values.sys_id }}
+        Before: {{ outputs.plan.values.before }}
+        After:  name={{ outputs.read_back.results[0].name }}, ip={{ outputs.read_back.results[0].ip_address }}, owner={{ outputs.read_back.results[0]['owned_by.name'] }}
+
+  - id: close
+    type: io.kestra.plugin.servicenow.Update
+    domain: "{{ kv('SNOW_DOMAIN') }}"
+    username: "{{ secret('SNOW_USERNAME') }}"
+    password: "{{ secret('SNOW_PASSWORD') }}"
+    table: change_request
+    sysId: "{{ outputs.change.result.sys_id }}"
+    data:
+      state: "3"
+      close_code: successful
+      close_notes: "Implemented by Kestra execution {{ execution.id }}, approved by {{ outputs.decided.values.by }}. CI {{ outputs.read_back.results[0].name }} verified after write."
+
+  - id: summary
+    type: io.kestra.plugin.core.log.Log
+    message: |
+      {{ outputs.change.result.number }} closed successful
+        Action    {{ inputs.action }} {{ inputs.ci_class }}
+        CI        {{ outputs.read_back.results[0].name }} ({{ outputs.ci.values.sys_id }})
+        Before    {{ outputs.plan.values.before }}
+        After     name={{ outputs.read_back.results[0].name }}, ip={{ outputs.read_back.results[0].ip_address }}, owner={{ outputs.read_back.results[0]['owned_by.name'] }}
+        Approved  {{ outputs.decided.values.by }}
+
+errors:
+  # CMDB untouched: cancel the change. CMDB touched: leave it open with a note for review.
+  - id: cancel_change
+    type: io.kestra.plugin.servicenow.Update
+    runIf: "{{ outputs.change is defined and outputs.create_ci is not defined and outputs.update_ci is not defined }}"
+    domain: "{{ kv('SNOW_DOMAIN') }}"
+    username: "{{ secret('SNOW_USERNAME') }}"
+    password: "{{ secret('SNOW_PASSWORD') }}"
+    table: change_request
+    sysId: "{{ outputs.change.result.sys_id }}"
+    data:
+      state: "4"
+      close_code: unsuccessful
+      close_notes: "Canceled by Kestra execution {{ execution.id }}: {{ outputs.decided is defined ? 'approval=' ~ outputs.decided.values.approval ~ ' (' ~ outputs.decided.values.by ~ ')' : 'run failed before a decision' }}. The CMDB was not modified."
+
+  - id: flag_for_review
+    type: io.kestra.plugin.servicenow.Update
+    runIf: "{{ outputs.change is defined and (outputs.create_ci is defined or outputs.update_ci is defined) }}"
+    domain: "{{ kv('SNOW_DOMAIN') }}"
+    username: "{{ secret('SNOW_USERNAME') }}"
+    password: "{{ secret('SNOW_PASSWORD') }}"
+    table: change_request
+    sysId: "{{ outputs.change.result.sys_id }}"
+    data:
+      work_notes: "Kestra execution {{ execution.id }} failed after writing the CMDB. Check the CI against the implementation plan; backout: {{ outputs.plan.values.before }}"
+
+outputs:
+  - id: change_number
+    type: STRING
+    value: "{{ outputs.change.result.number ?? 'none' }}"
+  - id: approval
+    type: STRING
+    value: "{{ outputs.decided.values.approval ?? 'never asked' }}"
+  - id: approved_by
+    type: STRING
+    value: "{{ outputs.decided.values.by ?? 'nobody' }}"
+  - id: ci_sys_id
+    type: STRING
+    value: "{{ outputs.ci.values.sys_id ?? 'not written' }}"
