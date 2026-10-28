@@ -1,0 +1,37 @@
+---
+- name: Run PowerShell Script on Windows
+  hosts: windows_vms
+  gather_facts: no
+  tasks:
+    - name: Update password for {{ kv('dcConfig').username }}
+      ansible.windows.win_user:
+        name: "{{ fromJson(read(outputs.resetPassword.outputFiles['credentials.json'])).username }}"
+        password: "{{ secret('AD_CONTROLLER_PW') }}"
+        state: present
+      register: password_change
+
+    - name: Confirm password change
+      debug:
+        msg: "Password successfully updated for user {{ kv('dcConfig').domainName }}."
+      when: password_change.changed
+
+    - name: Execute Reverse Zone Creation Script
+      ansible.windows.win_shell: |
+        $ZoneName = "{{ (inputs.subnetCIDR | split('\.'))[1] }}.{{ (inputs.subnetCIDR | split('\.'))[0] }}.in-addr.arpa"
+        try {
+            if (!(Get-DnsServerZone -Name $ZoneName -ErrorAction SilentlyContinue)) {
+                # Force Windows to create the exact /16 boundary zone using -Name
+                Add-DnsServerPrimaryZone -Name $ZoneName -ReplicationScope Forest -ErrorAction Stop
+                Write-Output "Reverse zone $ZoneName created successfully to cover the /20 subnet."
+            } else {
+                Write-Output "Reverse zone $ZoneName already exists. Skipping."
+            }
+        } catch {
+            Write-Error "Reverse zone creation failed. Error: $_"
+        }
+
+      register: dns_script_output
+
+    - name: Print PowerShell Output to Kestra Logs
+      debug:
+        var: dns_script_output.stdout_lines

@@ -1,0 +1,32 @@
+id: create_vm_with_license
+namespace: company.team
+
+labels:
+  - key: feature
+    value: assets
+
+inputs:
+  - id: vm_name
+    type: STRING
+    defaults: "windows-web-01"
+  - id: license
+    type: SELECT
+    expression: "{{ assets(type = 'io.kestra.plugin.ee.assets.VM.License') | jq('.[].id') }}"
+    
+
+tasks:
+  - id: gcp_create_instance
+    type: io.kestra.plugin.core.log.Log
+    message: "Provisionioning VM {{ inputs.vm_name }}"
+    assets:
+      inputs:
+        - id: "{{ inputs.license }}"
+      outputs:
+        - id: "{{ inputs.vm_name | slugify }}"
+          type: io.kestra.plugin.ee.assets.VM
+          metadata:
+            os: "windows-server-2022"
+            region: "us-central1"
+            status: "running"
+            name: "{{ inputs.vm_name }}"
+            vm: "{{ inputs.vm_name}}"

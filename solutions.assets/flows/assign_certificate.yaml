@@ -1,0 +1,37 @@
+id: assign_certificate
+namespace: company.team
+labels:
+  - key: feature
+    value: assets
+inputs:
+  - id: target_vm
+    type: STRING
+    defaults: "windows-web-01"
+
+  - id: target_ip
+    type: STRING
+    defaults: "35.202.10.100" # References the IP Asset ID
+
+  - id: ip_asset_id
+    type: SELECT
+    autoSelectFirst: true
+    expression: "{{ [((assets(type='io.kestra.plugin.ee.assets.VM.IP') | jq('.[]  | select(.metadata.attached_to == \"' ~ inputs.target_vm ~ '\")')) | first).id] }}"
+    dependsOn:
+      inputs:
+        - target_vm
+
+tasks:
+  - id: certbot_provision
+    type: io.kestra.plugin.scripts.shell.Script
+    script: "echo 'Provisioning Lets Encrypt Cert for {{ inputs.target_ip }}'"
+    assets:
+      inputs:
+        - id: "{{ inputs.target_vm | slugify }}"
+        - id: "{{ inputs.ip_asset_id }}"
+      outputs:
+        - id: "{{ 'cert-' ~ execution.id }}"
+          type: io.kestra.plugin.ee.assets.VM.Certificate
+          metadata:
+            issuer: "LetsEncrypt"
+            valid_until: "2024-05-01"
+            vm: "{{ inputs.target_vm }}"

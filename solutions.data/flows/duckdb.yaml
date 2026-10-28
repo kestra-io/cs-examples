@@ -1,0 +1,23 @@
+id: duckdb
+namespace: solutions.data
+inputs:
+  - id: csvFile
+    type: FILE
+    description: The CSV file to process
+    
+tasks:
+  - id: process_csv_with_duckdb
+    type: io.kestra.plugin.jdbc.duckdb.Query
+    inputFiles:
+      data.csv: "{{ inputs.csvFile }}"
+    sql: |
+      SELECT
+        *,
+        (a + b + c) AS total
+      FROM read_csv_auto('{{ workingDir }}/data.csv', header=True);
+    fetchType: STORE
+
+outputs:
+  - id: csv
+    type: FILE
+    value: "{{outputs.process_csv_with_duckdb.uri}}"

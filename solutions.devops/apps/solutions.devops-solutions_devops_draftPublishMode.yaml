@@ -1,0 +1,103 @@
+id: solutions_devops_draftPublishMode
+type: io.kestra.plugin.ee.apps.Execution
+displayName: Draft and Publish Editor
+namespace: solutions.devops
+flowId: draft_publish_mode
+
+access:
+  type: PRIVATE
+tags:
+  - Human in the loop
+  - Editing
+
+description: |
+  Front end for the draftPublishMode flow: edit, save as a draft, come back and
+  amend, publish when ready. Nothing downstream runs until the reviewer selects
+  PUBLISH, and each round is individually recorded on the Pause task.
+
+  This App covers more layout states than a single-shot form needs, because the
+  flow loops. One DRAFT round moves the execution through:
+
+    CREATED -> RUNNING -> PAUSED -> RESTARTED -> RUNNING -> PAUSED
+
+  RESTARTED is not one of the states an App layout can key on (OPEN, ERROR,
+  FAILURE, SUCCESS, PAUSE, CREATED, RUNNING, RESUME, FALLBACK), so it lands on
+  FALLBACK. Without a FALLBACK block the viewer gets a blank page mid-loop.
+
+  AutoRefresh is deliberately absent from the PAUSE block. That is the one screen
+  with a form the viewer is typing into, and AutoRefresh has no configurable
+  interval, so it would discard input mid-edit. The trade-off is that for a beat
+  after each save, while LoopUntil builds the next iteration, the execution reads
+  PAUSED with nothing yet resumable. Keep checkFrequency.interval short in the
+  flow to make that window as small as possible.
+
+layout:
+  - on: OPEN
+    blocks:
+      - type: io.kestra.plugin.ee.apps.core.blocks.Markdown
+        content: |
+          ## Start a new draft
+          Fill in the initial values. You will be able to review and amend them
+          as many times as you like before publishing.
+      - type: io.kestra.plugin.ee.apps.execution.blocks.CreateExecutionForm
+      - type: io.kestra.plugin.ee.apps.execution.blocks.CreateExecutionButton
+        text: Start editing
+        style: SUCCESS
+
+  - on: CREATED
+    blocks:
+      - type: io.kestra.plugin.ee.apps.core.blocks.Markdown
+        content: Starting the editor...
+      - type: io.kestra.plugin.ee.apps.core.blocks.Loading
+      - type: io.kestra.plugin.ee.apps.core.blocks.AutoRefresh
+
+  - on: RUNNING
+    blocks:
+      - type: io.kestra.plugin.ee.apps.core.blocks.Markdown
+        content: Saving your changes...
+      - type: io.kestra.plugin.ee.apps.core.blocks.Loading
+      - type: io.kestra.plugin.ee.apps.core.blocks.AutoRefresh
+
+  - on: PAUSE
+    blocks:
+      - type: io.kestra.plugin.ee.apps.core.blocks.Markdown
+        content: |
+          ## Review your draft
+          The fields below are pre-filled with your most recent values.
+          Choose **DRAFT** to save and keep editing, or **PUBLISH** to finish.
+          Nothing is published until you select PUBLISH.
+      - type: io.kestra.plugin.ee.apps.execution.blocks.ResumeExecutionForm
+      - type: io.kestra.plugin.ee.apps.execution.blocks.ResumeExecutionButton
+        text: Save
+        style: SUCCESS
+
+  - on: SUCCESS
+    blocks:
+      - type: io.kestra.plugin.ee.apps.core.blocks.Alert
+        style: SUCCESS
+        showIcon: true
+        content: Published. These are the final values.
+      - type: io.kestra.plugin.ee.apps.execution.blocks.Outputs
+
+  - on: FAILURE
+    blocks:
+      - type: io.kestra.plugin.ee.apps.core.blocks.Alert
+        style: ERROR
+        showIcon: true
+        content: Something went wrong while saving. The log below has the detail.
+      - type: io.kestra.plugin.ee.apps.execution.blocks.Logs
+
+  - on: ERROR
+    blocks:
+      - type: io.kestra.plugin.ee.apps.core.blocks.Alert
+        style: ERROR
+        showIcon: true
+        content: Something went wrong while saving. The log below has the detail.
+      - type: io.kestra.plugin.ee.apps.execution.blocks.Logs
+
+  - on: FALLBACK
+    blocks:
+      - type: io.kestra.plugin.ee.apps.core.blocks.Markdown
+        content: Working...
+      - type: io.kestra.plugin.ee.apps.core.blocks.Loading
+      - type: io.kestra.plugin.ee.apps.core.blocks.AutoRefresh

@@ -1,0 +1,34 @@
+id: attemptFlakyCall
+namespace: solutions.resilience
+
+description: |
+  Attempts one call against the "flaky system" using whatever status code is
+  currently stored in the flaky_system_status KV entry. Never fails itself —
+  `options.allowFailed` treats a non-2xx response as a normal completion —
+  it just reports the real outcome via the `status` output ("success" |
+  "failure") so the calling LoopUntil (in dynamicRecovery) can decide
+  whether to trigger self-recovery, one level down, e.g.
+  {{ outputs.<this_task_id>.outputs.status }}.
+
+labels:
+  - key: "maintainer"
+    value: "faizan"
+  - key: "feature"
+    value: "resilience"
+
+tasks:
+  - id: get_flaky_system_path
+    type: io.kestra.plugin.core.kv.Get
+    key: "flaky_system_status"
+    errorOnMissing: true
+
+  - id: call_flaky_system
+    type: io.kestra.plugin.core.http.Request
+    options:
+      allowFailed: true
+    uri: "http://httpbin/status/{{ outputs.get_flaky_system_path.value }}"
+
+outputs:
+  - id: status
+    type: STRING
+    value: "{{ outputs.call_flaky_system.code == 200 ? 'success' : 'failure' }}"

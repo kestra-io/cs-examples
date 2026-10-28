@@ -1,0 +1,164 @@
+id: serviceNowChangeApproval
+namespace: solutions.ops
+labels:
+  - key: feature
+    value: servicenow
+  - key: domain
+    value: ops
+  - key: maintainer
+    value: caxe
+  - key: kestra.version
+    value: 2.0.3
+description: |
+  Polls ServiceNow for change requests waiting on approval, routes each one to a
+  Kestra Human Task, then writes the decision back to the change record.
+
+  One change per execution (sysparm_limit=1). The flow claims the record first by
+  stamping u_kestra_execution, and the trigger query excludes claimed records, so
+  the next poll moves on to the next change instead of re-firing on the same one.
+
+  ServiceNow prerequisites:
+  - custom string field u_kestra_execution on change_request (swap for a tag or
+    an assignment-group filter if adding a field isn't an option)
+  - integration user with read/write on change_request
+  - secrets SNOW_USERNAME / SNOW_PASSWORD, KV key SNOW_INSTANCE_URL
+    (e.g. https://dev12345.service-now.com)
+
+tasks:
+  - id: change
+    type: io.kestra.plugin.core.output.OutputValues
+    values:
+      sys_id: "{{ json(trigger.body).result[0].sys_id }}"
+      number: "{{ json(trigger.body).result[0].number }}"
+      short_description: "{{ json(trigger.body).result[0].short_description }}"
+      risk: "{{ json(trigger.body).result[0].risk }}"
+      start_date: "{{ json(trigger.body).result[0].start_date }}"
+
+  # Claim before pausing. Without this, every poll during the approval window
+  # would see the same record and start a duplicate execution.
+  - id: claim_change
+    type: io.kestra.plugin.core.http.Request
+    method: PATCH
+    uri: "{{ kv('SNOW_INSTANCE_URL') }}/api/now/table/change_request/{{ outputs.change.values.sys_id }}"
+    contentType: application/json
+    headers:
+      Accept: application/json
+    options:
+      auth:
+        type: BASIC
+        username: "{{ secret('SNOW_USERNAME') }}"
+        password: "{{ secret('SNOW_PASSWORD') }}"
+    body: |
+      {
+        "u_kestra_execution": "{{ execution.id }}",
+        "work_notes": "Picked up by Kestra execution {{ execution.id }}, pending approval."
+      }
+
+  - id: cab_approval
+    type: io.kestra.plugin.ee.flow.HumanTask
+    description: |
+      {{ outputs.change.values.number }}: {{ outputs.change.values.short_description }}
+      Risk: {{ outputs.change.values.risk }} | Planned start: {{ outputs.change.values.start_date }}
+    assignment:
+      groups:
+        - Change Advisory Board
+    pauseDuration: PT24H
+    behavior: FAIL
+    onResume:
+      - id: decision
+        type: SELECT
+        displayName: Decision
+        values:
+          - APPROVE
+          - REJECT
+      - id: comment
+        type: STRING
+        displayName: Comment for the change record
+        required: false
+
+  - id: write_back
+    type: io.kestra.plugin.core.flow.Switch
+    value: "{{ outputs.cab_approval.onResume.decision }}"
+    cases:
+      APPROVE:
+        - id: approve_change
+          type: io.kestra.plugin.core.http.Request
+          method: PATCH
+          uri: "{{ kv('SNOW_INSTANCE_URL') }}/api/now/table/change_request/{{ outputs.change.values.sys_id }}"
+          contentType: application/json
+          headers:
+            Accept: application/json
+          options:
+            auth:
+              type: BASIC
+              username: "{{ secret('SNOW_USERNAME') }}"
+              password: "{{ secret('SNOW_PASSWORD') }}"
+          body: |
+            {
+              "approval": "approved",
+              "work_notes": "Approved in Kestra by {{ outputs.cab_approval.resumed.by ?? 'unknown' }}. {{ outputs.cab_approval.onResume.comment ?? '' }}"
+            }
+      REJECT:
+        - id: reject_change
+          type: io.kestra.plugin.core.http.Request
+          method: PATCH
+          uri: "{{ kv('SNOW_INSTANCE_URL') }}/api/now/table/change_request/{{ outputs.change.values.sys_id }}"
+          contentType: application/json
+          headers:
+            Accept: application/json
+          options:
+            auth:
+              type: BASIC
+              username: "{{ secret('SNOW_USERNAME') }}"
+              password: "{{ secret('SNOW_PASSWORD') }}"
+          body: |
+            {
+              "approval": "rejected",
+              "work_notes": "Rejected in Kestra by {{ outputs.cab_approval.resumed.by ?? 'unknown' }}. {{ outputs.cab_approval.onResume.comment ?? '' }}"
+            }
+
+# Timeout (24h with behavior FAIL) or any HTTP failure lands here: release the
+# claim so the next poll picks the change up again, and leave a trail on the record.
+errors:
+  - id: release_claim
+    type: io.kestra.plugin.core.http.Request
+    method: PATCH
+    uri: "{{ kv('SNOW_INSTANCE_URL') }}/api/now/table/change_request/{{ json(trigger.body).result[0].sys_id }}"
+    contentType: application/json
+    headers:
+      Accept: application/json
+    options:
+      auth:
+        type: BASIC
+        username: "{{ secret('SNOW_USERNAME') }}"
+        password: "{{ secret('SNOW_PASSWORD') }}"
+    body: |
+      {
+        "u_kestra_execution": "",
+        "work_notes": "Kestra execution {{ execution.id }} failed or timed out, released for re-approval."
+      }
+
+triggers:
+  - id: poll_pending_changes
+    disabled: true
+    type: io.kestra.plugin.core.http.Trigger
+    uri: "{{ kv('SNOW_INSTANCE_URL') }}/api/now/table/change_request"
+    method: GET
+    headers:
+      Accept: application/json
+    params:
+      sysparm_query: approval=requested^u_kestra_executionISEMPTY^ORDERBYsys_created_on
+      sysparm_fields: sys_id,number,short_description,risk,start_date
+      sysparm_limit: "1"
+    options:
+      auth:
+        type: BASIC
+        username: "{{ secret('SNOW_USERNAME') }}"
+        password: "{{ secret('SNOW_PASSWORD') }}"
+    # ServiceNow returns 200 with {"result": []} when nothing matches, so the
+    # status code alone would fire every interval.
+    responseCondition: "{{ response.statusCode == 200 and (json(response.body).result | length) > 0 }}"
+    interval: PT1M
+    # Default false would block new polls while an execution sits paused on the
+    # Human Task; the claim field is what prevents duplicates instead.
+    allowConcurrent: true

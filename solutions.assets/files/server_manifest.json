@@ -1,0 +1,23 @@
+[
+  {
+    "id": "server-001",
+    "ip": "192.168.1.101",
+    "os": "Ubuntu",
+    "env": "dev",
+    "python_version": "3.9"
+  },
+  {
+    "id": "server-002",
+    "ip": "192.168.1.102",
+    "os": "CentOS",
+    "env": "staging",
+    "python_version": "3.8"
+  },
+  {
+    "id": "server-003",
+    "ip": "192.168.1.103",
+    "os": "Debian",
+    "env": "prod",
+    "python_version": "3.10"
+  }
+]

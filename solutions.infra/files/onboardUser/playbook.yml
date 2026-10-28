@@ -1,0 +1,20 @@
+---
+- name: Onboard User
+  hosts: targets
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Create User
+      user:
+        name: "{{ inputs.username }}"
+        groups: sudo
+        append: yes
+        shell: /bin/bash
+        state: present
+        create_home: yes
+
+    - name: Add Authorized Key
+      authorized_key:
+        user: "{{ inputs.username }}"
+        key: "{{ inputs.publicKey }}"
+        state: present

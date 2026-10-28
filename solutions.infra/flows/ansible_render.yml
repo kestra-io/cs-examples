@@ -1,0 +1,59 @@
+id: ansible-poc
+namespace: company.team
+
+tasks:
+  - id: dummy_values
+    type: io.kestra.plugin.core.output.OutputValues
+    values:
+      message: "Hello, World!This Message got templated Automatically"
+
+  # the WorkingDirectory task here is used to download all templated git yaml files
+  - id: setup
+    description: Sample for replicating Git Downloads in WorkingDirectory
+    type: io.kestra.plugin.core.flow.WorkingDirectory
+    tasks:
+      - id: ansible_download_inventory_repo
+        type: io.kestra.plugin.scripts.shell.Script
+        script: |
+          mkdir ansible_inventory
+          echo "localhost ansible_connection=local" > ansible_inventory/inventory.ini
+
+      - id: ansible_download_playbook_repo
+        type: io.kestra.plugin.scripts.shell.Script
+        script: |
+          mkdir ansible_playbooks
+          cat <<EOF > ansible_playbooks/playbook.yml
+          ---
+          - hosts: localhost
+            gather_facts: false 
+            tasks:
+              - name: Print Hello World
+                debug:
+                  msg: "{% raw %}{{ outputs.dummy_values.values.message }}{% endraw %}"
+          EOF
+    outputFiles:
+      - ansible_*/**
+
+  # the WorkingDirectory task here is used to render the templateed files
+  - id: render_and_run
+    description: Sample for replicating Git Downloads in WorkingDirectory
+    type: io.kestra.plugin.core.flow.WorkingDirectory
+    tasks:
+      - id: render_all_files
+        type: io.kestra.plugin.scripts.shell.Script
+        # We pass the files into the script to render them
+        script: |
+          {% for entry in outputs.setup.outputFiles %}
+          mkdir -p "$(dirname "{{ entry.key }}")"
+          cat <<'EOF' > "{{ entry.key }}"
+          {{ render(read(entry.value)) }}
+          EOF
+          {% endfor %}
+        # outputFiles:
+        #   - ansible_*/**
+
+      - id: ansible_run_playbook
+        type: io.kestra.plugin.ansible.cli.AnsibleCLI
+        containerImage: cytopia/ansible:latest-tools
+        commands:
+          - ansible-playbook -i ansible_inventory/inventory.ini ansible_playbooks/playbook.yml

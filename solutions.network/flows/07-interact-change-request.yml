@@ -1,0 +1,165 @@
+id: 07-interact-change-request
+namespace: solutions.network
+description: |
+  # Network Change Request — App Backend Flow
+
+  The backend flow that powers the Network Operations App (app-network-ops-portal).
+  Receives change request submissions, auto-assigns a reviewer, pauses for approval,
+  and triggers the appropriate provisioning or configuration flow on approval.
+
+  **Demo:** This flow is what makes the App work. The App is the UI layer —
+  the logic, audit trail, and execution history live here, versioned in Git,
+  observable in Kestra's execution view.
+
+  Separating the App (presentation) from the Flow (logic) means:
+  - The App can be updated without touching the business logic
+  - The flow can be triggered programmatically (API, webhook, CI/CD) without the App
+  - Every execution is an immutable audit record regardless of how it was triggered
+
+labels:
+  chapter: "07-interact"
+  demo: network-orchestration
+
+inputs:
+  - id: requestor_name
+    type: STRING
+    description: "Full name of the engineer submitting the change"
+  - id: requestor_team
+    type: STRING
+    description: "Team name (e.g. Network Ops — EMEA)"
+    defaults: "Network Ops — EMEA"
+  - id: change_type
+    type: SELECT
+    description: "Category of network change"
+    values:
+      - ZTP — Provision New Device
+      - BGP Route Update
+      - Firewall Rule Change
+      - VLAN Modification
+      - Emergency Rollback
+  - id: affected_device
+    type: STRING
+    description: "Target device hostname(s) — comma-separated if multiple"
+    defaults: "core-rtr-emea-01"
+  - id: change_justification
+    type: STRING
+    description: "Business justification — link to project, incident, or CMDB CI"
+  - id: planned_window
+    type: STRING
+    description: "Proposed maintenance window (e.g. 2026-06-25 22:00 UTC)"
+    defaults: "Next available window"
+  - id: priority
+    type: SELECT
+    values:
+      - Routine
+      - High — same-day
+      - Emergency — immediate
+    defaults: Routine
+
+tasks:
+  - id: log_change_request
+    type: io.kestra.plugin.core.log.Log
+    description: |
+      Creates an immutable audit record of the submission.
+      This log line is the timestamp-of-receipt — referenced if there is ever a
+      question about when the change was submitted.
+    message: |
+      ═══════════════════════════════════════════════
+      CHANGE REQUEST RECEIVED
+      ═══════════════════════════════════════════════
+      Requestor   : {{ inputs.requestor_name }} ({{ inputs.requestor_team }})
+      Change type : {{ inputs.change_type }}
+      Device(s)   : {{ inputs.affected_device }}
+      Priority    : {{ inputs.priority }}
+      Window      : {{ inputs.planned_window }}
+      Ticket      : {{ execution.id }}
+      Received    : {{ execution.startDate }}
+      ═══════════════════════════════════════════════
+
+  - id: auto_assign_reviewer
+    type: io.kestra.plugin.scripts.python.Script
+    description: |
+      Determines the appropriate reviewer and SLA based on change type and priority.
+      Routing table is stored as a namespace variable — no hardcoding in the flow.
+    taskRunner:
+      type: io.kestra.plugin.scripts.runner.docker.Docker
+    containerImage: python:3.12-slim
+    script: |
+      routing = {
+          "ZTP — Provision New Device":  "network-architecture@demo.internal",
+          "BGP Route Update":             "noc-lead@demo.internal",
+          "Firewall Rule Change":         "security-team@demo.internal",
+          "VLAN Modification":            "network-architecture@demo.internal",
+          "Emergency Rollback":           "noc-oncall@demo.internal",
+      }
+      sla = {
+          "Routine":               "24 hours",
+          "High — same-day":       "4 hours",
+          "Emergency — immediate": "1 hour",
+      }
+      change_type = "{{ inputs.change_type }}"
+      priority    = "{{ inputs.priority }}"
+      reviewer    = routing.get(change_type, "noc-lead@demo.internal")
+      sla_target  = sla.get(priority, "24 hours")
+
+      print(f"Assigned reviewer : {reviewer}")
+      print(f"SLA target        : {sla_target}")
+      print(f"Notification sent to {reviewer} with link to approval App.")
+
+  - id: await_manager_approval
+    type: io.kestra.plugin.core.flow.Pause
+    description: |
+      **Human-in-the-loop gate.** Execution pauses here.
+
+      The assigned reviewer receives a notification with a link to the Network Ops App.
+      In the App they see the full request details in a clean UI — no raw JSON,
+      no execution IDs — and click Approve or Reject.
+
+      This gate replaces the email/Teams approval chain entirely.
+    onResume:
+      - id: approval_choice
+        type: SELECT
+        description: "Approve or reject this change request"
+        values:
+          - Approve
+          - Reject
+      - id: reviewer_notes
+        type: STRING
+        description: "Approval notes or rejection reason (required if rejecting)"
+        defaults: ""
+
+  - id: process_decision
+    type: io.kestra.plugin.core.flow.If
+    description: "Routes to provisioning or rejection path based on approver decision."
+    condition: "{{ outputs.await_manager_approval.onResume.approval_choice == 'Approve' }}"
+    then:
+      - id: trigger_provisioning
+        type: io.kestra.plugin.core.flow.Subflow
+        description: |
+          Triggers the ZTP provisioning flow (05) with the approved change parameters.
+          wait: false — the change request completes immediately while provisioning
+          runs asynchronously. The engineer can track it in the Executions tab.
+        namespace: solutions.network
+        flowId: 05-compose-ztp-provisioning
+        inputs:
+          device_hostname: "{{ inputs.affected_device }}"
+          vendor: "Cisco"
+          region: "EMEA"
+          change_ticket: "{{ execution.id }}"
+          skip_approval: true
+        wait: false
+
+      - id: log_approval
+        type: io.kestra.plugin.core.log.Log
+        message: |
+          ✅ APPROVED | {{ inputs.affected_device }} | {{ inputs.change_type }}
+          Reviewer notes : {{ outputs.await_manager_approval.onResume.reviewer_notes | default("none") }}
+          Provisioning flow triggered. Track in Executions tab.
+
+    else:
+      - id: log_rejection
+        type: io.kestra.plugin.core.log.Log
+        message: |
+          ❌ REJECTED | {{ inputs.affected_device }} | {{ inputs.change_type }}
+          Reason: {{ outputs.await_manager_approval.onResume.reviewer_notes | default("No reason provided") }}
+          Requestor notified. Revise and resubmit when ready.

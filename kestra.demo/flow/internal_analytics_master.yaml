@@ -1,0 +1,144 @@
+id: internal_analytics_master
+namespace: kestra.demo
+
+labels:
+  maintainer: "parham"
+  analytics: feature
+  webinar: feature
+
+# --- FLOW CONFIGURATION ---
+concurrency:
+  limit: 1 # Ensure only one production run at a time
+
+sla:
+  - id: max_duration
+    type: MAX_DURATION
+    duration: PT1H        # max 1 hour runtime
+    behavior: CANCEL
+
+retry:
+  type: exponential
+  behavior: RETRY_FAILED_TASK
+  interval: PT10S
+  maxInterval: PT10M
+  maxAttempts: 2
+
+triggers:
+  - id: nightly_cron
+    type: io.kestra.plugin.core.trigger.Schedule
+    cron: "0 2 * * *"
+    disabled: true
+    
+  - id: github_actions_webhook
+    type: io.kestra.plugin.core.trigger.Webhook
+    key: "{{secret('YOUR_WEBHOOK_TOKEN')}}"
+
+tasks:
+  - id: log_start
+    type: io.kestra.plugin.core.log.Log
+    message: "kestra data pipeline 🚀"
+
+  # --- INFRASTRUCTURE SETUP ---
+  - id: git_clone_source
+    type: io.kestra.plugin.git.Clone
+    url: https://github.com/kestra-io/analytics-stack
+    branch: main
+
+  - id: ingestion_parallel
+    type: io.kestra.plugin.core.flow.Parallel
+    tasks:
+      - id: hubspot_airbyte
+        type: io.kestra.plugin.airbyte.cloud.jobs.Sync
+        token: "{{ secret('AIRBYTE_TOKEN') }}"
+        connectionId: e3b1ce92-547c-436f-b1e8-23b6936c12cd
+
+      - id: commonroom_dlt
+        type: io.kestra.plugin.dlt.Run
+        description: "Sync Common Room & Pylon via dlt"
+        script: |
+          import dlt
+          import pandas as pd
+
+          pipeline = dlt.pipeline(
+              pipeline_name="refresh_commonroom",
+              destination="parquet",
+              dataset_name="csv_data"
+          )
+          info = pipeline.run(df.to_dict(orient="records"), table_name="scores")
+          print(info)
+
+      - id: product_posthog_python
+        type: io.kestra.plugin.scripts.python.Script
+        description: "Direct API extraction for granular events"
+        containerImage: python:3.11-slim
+        beforeCommands:
+          - pip install posthog
+        script: |
+          import posthog
+          print("Extracting point-in-time product usage...")
+          # Trivial logic for demo
+          posthog.capture('distinct_id', 'webinar_demo_event')
+
+      
+
+  - id: post_process
+    type: io.kestra.plugin.core.flow.Parallel
+    tasks:
+      - id: nodejs_notify_start
+        type: io.kestra.plugin.scripts.node.Script
+        description: "Post-processing withe Node.js"
+        containerImage: node:20-slim
+        script: |
+          console.log("Analytics Pipeline Phase 1: Ingestion Active");
+          
+      - id: go_notify_end
+        type: io.kestra.plugin.scripts.go.Script
+        containerImage: golang:1.26-alpine
+        script: |
+          package main
+          import "fmt"
+          func main() {
+              fmt.Println("Ingestion complete!")
+          }
+        beforeCommands:
+          - go mod init go_script 
+      
+  # --- TRANSFORMATION PHASE ---
+  - id: dbt_transform
+    type: io.kestra.plugin.dbt.cli.DbtCLI
+    containerImage: ghcr.io/kestra-io/dbt-bigquery:latest
+    commands:
+      - dbt deps
+      - dbt build --select tag:marketing tag:sales
+
+  # --- POST-TRANSFORMATION & SUBFLOW ---
+
+  - id: trigger_mart_subflow
+    type: io.kestra.plugin.core.flow.Subflow
+    flowId: internal_analytics_subflow
+    namespace: kestra.demo
+    inputs:
+      cmd: "dbt {{ inputs.dbt_pipeline }} --target prod"
+    wait: true
+    
+  - id: lightdash_refresh_trgigger
+    type: io.kestra.plugin.core.http.Request
+    uri: "https://app.lightdash.cloud/api/v1/projects/{{ secret.LIGHTDASH_ID }}/refresh"
+    method: POST
+  
+
+
+
+# # --- ERROR HANDLING ---
+# errors:
+#   - id: slack_alert
+#     type: io.kestra.plugin.slack.notifications.SlackExecution
+#     url: "{{ secret.SLACK_WEBHOOK_URL }}"
+#     channel: "#data-alerts"
+#     payload: |
+#       :rotating_light: *Pipeline Failed*
+#       *Flow:* {{ flow.id }}
+#       *Execution:* {{ execution.id }}
+#       *Namespace:* {{ flow.namespace }}
+#       <{{ flow.url }}|View Execution>
+

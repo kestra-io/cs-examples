@@ -16,39 +16,6 @@ jobs:
       - name: Validate all flows
         uses: kestra-io/github-actions/validate-flows@main
         with:
-          directory: ./solutions.data/flows
-          server: https://partners.kestra.cloud
+          directory: ./
+          server: https://demo.kestra-technologies.kestra.cloud
           apiToken: ${{ secrets.API_KEY }}
-          tenant: solutions
-  deploy:
-    runs-on: ubuntu-latest
-    needs: validate
-    steps:
-      - name: Checkout repository content
-        uses: actions/checkout@v4
-      - name: Deploy solutions.data flows
-        uses: kestra-io/github-actions/deploy-flows@main
-        with:
-          directory: ./solutions.data/flows
-          namespace: solutions.data
-          server: https://partners.kestra.cloud
-          apiToken: ${{ secrets.API_KEY }}
-          tenant: solutions
-          override: true
-
-  # Example: Deploy namespace files
-  upload_nsfiles:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository content
-        uses: actions/checkout@v4
-      - name: Upload config YAML to solutions.data namespace
-        uses: kestra-io/github-actions/deploy-namespace-files@main
-        with:
-          localPath: ./solutions.data/files/dbt
-          namespace: solutions.data
-          namespacePath: ./pipelines
-          server: https://partners.kestra.cloud
-          apiToken: ${{ secrets.API_KEY }}
-          tenant: solutions
-          override: true

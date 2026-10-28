@@ -1,0 +1,28 @@
+id: grafana_alert_webhook
+namespace: solutions.alerting
+description: |
+  Receives Grafana alert notifications via webhook. All alert rules on the
+  Kestra Overview dashboard (monitoring/grafana/provisioning/alerting/rules.yaml)
+  route here in addition to Slack, via a webhook receiver added to the
+  slack-kestra-alerts contact point. Logs the received payload, and additionally
+  calls the prescriptive_jvm_sizing subflow when the firing alert is the host
+  memory utilization alert.
+
+tasks:
+  - id: log_alert
+    type: io.kestra.plugin.core.log.Log
+    message: "Grafana alert webhook received: {{ trigger.body }}"
+
+  - id: trigger_jvm_sizing_on_memory_alert
+    type: io.kestra.plugin.core.flow.If
+    condition: "{{ trigger.body.status == 'firing' and trigger.body.commonLabels.alertname == 'Host: Memory Utilization High' }}"
+    then:
+      - id: run_prescriptive_jvm_sizing
+        type: io.kestra.plugin.core.flow.Subflow
+        namespace: solutions.alerting
+        flowId: prescriptive_jvm_sizing
+
+triggers:
+  - id: from_grafana
+    type: io.kestra.plugin.core.trigger.Webhook
+    key: "{{ secret('GRAFANA_ALERT_WEBHOOK') }}"

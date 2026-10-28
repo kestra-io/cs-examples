@@ -1,0 +1,27 @@
+id: assign_external_ip
+namespace: company.team
+labels:
+  - key: feature
+    value: assets
+inputs:
+  - id: target_vm
+    type: STRING
+    defaults: "windows-web-01"
+  - id: target_ip
+    type: STRING
+    defaults: "35.202.10.100"
+
+tasks:
+  - id: reserve_ip
+    type: io.kestra.plugin.core.log.Log
+    message: "{{ inputs.target_vm }}-ip: {{inputs.target_ip}}"
+    assets:
+      inputs:
+        - id: "{{ inputs.target_vm | slugify }}" # Dependency: Needs VM to exist
+      outputs:
+        - id: "{{ inputs.target_ip ~ '-' ~ execution.id }}" # Simulated Static IP
+          type: io.kestra.plugin.ee.assets.VM.IP
+          metadata:
+            type: "static"
+            attached_to: "{{ inputs.target_vm }}"
+            vm: "{{ inputs.target_vm }}"

@@ -1,0 +1,278 @@
+id: request_component_provisioning_idem_test
+namespace: solutions.devops
+
+description: |
+  Self-service infrastructure provisioning request, with governance.
+
+  A DevOps user describes one component (Namespace, VirtualMachine, Container,
+  Database, LoadBalancer, FileShare or ObjectStore), the request is routed for platform
+  approval, and only on approval is a component manifest committed to the
+  provisioning repository. Whatever GitOps pipeline already watches that
+  repository then does the actual provisioning, unchanged.
+
+  Pairs with processProvisionedComponent, which reacts to this flow's SUCCESS.
+
+  Design notes worth keeping if you adapt this:
+  - The commit is idempotent. Re-requesting an unchanged component stages
+    nothing, so `git commit` is skipped rather than exiting 1 and failing the
+    whole flow. `git push` still runs, to flush any unpushed local commit.
+  - A rejected request must not end in SUCCESS, or the downstream Flow trigger
+    fires and looks for a manifest that was deliberately never written. The
+    `requestRejected` task uses `allowFailure: true` so the execution ends in
+    WARNING, which the trigger ignores.
+  - The approver is captured from an explicit `onResume` input rather than from
+    `outputs.<pause>.resumed.by`, because `??` does not guard an undefined
+    property lookup and that expression fails after the human has already
+    approved, which is the worst possible moment.
+
+  Requires two KV pairs in this namespace:
+    PROVISIONING_REPO_URL      git remote of the provisioning repository
+    PROVISIONING_REPO_WORKDIR  persistent checkout path on the worker
+
+labels:
+  - key: "maintainer"
+    value: "faizan"
+  - key: "feature"
+    value: "devops-provisioning"
+
+inputs:
+  - id: component_type
+    type: SELECT
+    displayName: Component Type
+    values:
+      - Namespace
+      - VirtualMachine
+      - ObjectStore
+      - Container
+      - Database
+      - LoadBalancer
+      - FileShare
+    defaults: VirtualMachine
+
+  - id: application
+    type: STRING
+    displayName: Application
+    defaults: demo-app
+
+  - id: component_name
+    type: STRING
+    displayName: Component Name
+    defaults: demo-component-01
+
+  - id: zone
+    type: SELECT
+    displayName: Zone
+    values:
+      - Restricted
+      - DMZ
+      - Internal
+    defaults: Restricted
+
+  - id: tier
+    type: SELECT
+    displayName: Tier
+    values: ["gold", "silver", "bronze"]
+    defaults: "silver"
+
+  - id: environments
+    type: MULTISELECT
+    displayName: Target Environments
+    values: ["dev", "test", "uat", "preprod", "prod"]
+    defaults: ["dev"]
+
+  - id: namespace_attributes
+    type: FORM
+    displayName: Namespace Attributes
+    inputs:
+      - id: monitoring_level
+        type: STRING
+        required: true
+        defaults: standard
+      - id: cpus
+        type: INT
+        required: true
+        defaults: 4
+      - id: memory_gb
+        type: INT
+        required: true
+        defaults: 16
+      - id: storage_gb
+        type: INT
+        required: true
+        defaults: 100
+      - id: own_labels
+        type: STRING
+        required: true
+        defaults: demo
+
+  - id: vm_attributes
+    type: FORM
+    displayName: Virtual Machine Attributes
+    inputs:
+      - id: instance_type
+        type: STRING
+        required: true
+        defaults: Standard
+      - id: os_name
+        type: STRING
+        required: true
+        defaults: RHEL 9
+      - id: flavor
+        type: STRING
+        required: true
+        defaults: medium
+      - id: location
+        type: STRING
+        required: true
+        defaults: us-east
+
+  - id: requested_by
+    type: STRING
+    displayName: Requested By
+    defaults: demo-user
+
+tasks:
+  - id: render_manifest
+    type: io.kestra.plugin.scripts.python.Script
+    containerImage: python:3.12-slim
+    dependencies:
+      - kestra
+    script: |
+      import json
+      from kestra import Kestra
+
+      manifest = {
+          "application": "{{ inputs.application }}",
+          "componentType": "{{ inputs.component_type }}",
+          "name": "{{ inputs.component_name }}",
+          "zone": "{{ inputs.zone }}",
+          "tier": "{{ inputs.tier }}",
+          "environments": {{ inputs.environments }},
+          "namespaceAttributes": {
+              "monitoringLevel": "{{ inputs.namespace_attributes.monitoring_level ?? '' }}",
+              "cpus": {{ inputs.namespace_attributes.cpus ?? 'null' }},
+              "memoryGb": {{ inputs.namespace_attributes.memory_gb ?? 'null' }},
+              "storageGb": {{ inputs.namespace_attributes.storage_gb ?? 'null' }},
+              "ownLabels": "{{ inputs.namespace_attributes.own_labels ?? '' }}",
+          },
+          "vmAttributes": {
+              "instanceType": "{{ inputs.vm_attributes.instance_type ?? '' }}",
+              "osName": "{{ inputs.vm_attributes.os_name ?? '' }}",
+              "flavor": "{{ inputs.vm_attributes.flavor ?? '' }}",
+              "location": "{{ inputs.vm_attributes.location ?? '' }}",
+          },
+          "requestedBy": "{{ inputs.requested_by }}",
+      }
+
+      with open("component-manifest.json", "w") as f:
+          json.dump(manifest, f, indent=2)
+
+      Kestra.outputs({"manifest": manifest})
+    outputFiles:
+      - component-manifest.json
+
+  - id: notify_pending_approval
+    type: io.kestra.plugin.core.log.Log
+    message: "[TEST STAND-IN FOR SLACK] approval needed"
+
+  - id: platform_approval
+    type: io.kestra.plugin.core.flow.Pause
+    pauseDuration: PT1H
+    behavior: FAIL
+    onResume:
+      - id: approved
+        type: BOOL
+        required: true
+      - id: approver
+        type: STRING
+        required: true
+        defaults: platform-team
+
+  - id: push_to_provisioning_repo
+    type: io.kestra.plugin.scripts.shell.Commands
+    runIf: "{{ outputs.platform_approval.onResume.approved }}"
+    taskRunner:
+      type: io.kestra.plugin.core.runner.Process
+    beforeCommands:
+      - apt-get update -qq && apt-get install -y -qq git
+    inputFiles:
+      component-manifest.json: "{{ outputs.render_manifest.outputFiles['component-manifest.json'] }}"
+    commands:
+      - |
+        set -e
+        INPUT_DIR=$(pwd)
+        REPO_DIR="{{ kv('PROVISIONING_REPO_WORKDIR') }}"
+        REPO_URL="{{ kv('PROVISIONING_REPO_URL') }}"
+
+        if [ -d "$REPO_DIR/.git" ]; then
+          echo "PATH TAKEN: existing local checkout -> pull"
+          cd "$REPO_DIR"
+          git pull origin main 2>&1
+        elif git clone "$REPO_URL" "$REPO_DIR"; then
+          echo "PATH TAKEN: fresh clone"
+          cd "$REPO_DIR"
+          # clone doesn't reliably land on `main` (e.g. if the remote's HEAD
+          # symref points somewhere stale) - confirmed live: clone succeeded
+          # but checked out an empty local `master`, and the later push then
+          # failed with "src refspec main does not match any". Force onto
+          # `main` explicitly regardless of what clone defaulted to.
+          git checkout main 2>/dev/null || git checkout -b main
+        else
+          echo "PATH TAKEN: remote missing -> git init"
+          mkdir -p "$REPO_DIR"
+          cd "$REPO_DIR"
+          git init -q
+          git checkout -b main
+          git remote add origin "$REPO_URL"
+        fi
+
+        case "$REPO_URL" in
+          file://*)
+            REPO_PATH="${REPO_URL#file://}"
+            if [ ! -d "$REPO_PATH" ]; then
+              echo "SELF-HEAL: bare remote missing -> git init --bare"
+              git init --bare -q "$REPO_PATH"
+              git --git-dir="$REPO_PATH" symbolic-ref HEAD refs/heads/main
+            fi
+            ;;
+        esac
+
+        git config user.email "kestra@company.com"
+        git config user.name "Kestra"
+
+        mkdir -p components/{{ inputs.application }}
+        cp "$INPUT_DIR/component-manifest.json" components/{{ inputs.application }}/{{ inputs.component_name }}.json
+
+        git add components/{{ inputs.application }}/{{ inputs.component_name }}.json
+
+        if git diff --cached --quiet; then
+          echo "IDEMPOTENT NO-OP: {{ inputs.component_name }} manifest is unchanged, nothing to commit"
+        else
+          git commit -m "Add {{ inputs.component_type }} component {{ inputs.component_name }} (approved by {{ outputs.platform_approval.onResume.approver }})"
+        fi
+
+        # runs either way: flushes any commit that was made locally but never pushed
+        git push origin main 2>&1
+
+  - id: notify_completion
+    type: io.kestra.plugin.core.log.Log
+    runIf: "{{ outputs.platform_approval.onResume.approved }}"
+    message: "[TEST STAND-IN FOR SLACK] pushed to repo"
+
+  # A rejected request must NOT end in SUCCESS: the Flow trigger on
+  # process_provisioned_component_test fires on SUCCESS, and would then look for
+  # a manifest that was deliberately never pushed. allowFailure ends the
+  # execution in WARNING instead, which the trigger ignores.
+  - id: request_rejected
+    type: io.kestra.plugin.core.execution.Fail
+    allowFailure: true
+    condition: "{{ outputs.platform_approval.onResume.approved == false }}"
+    errorMessage: "Request for {{ inputs.component_name }} was rejected by {{ outputs.platform_approval.onResume.approver }}; nothing was pushed to the provisioning repo."
+
+outputs:
+  - id: application
+    type: STRING
+    value: "{{ inputs.application }}"
+  - id: component_name
+    type: STRING
+    value: "{{ inputs.component_name }}"

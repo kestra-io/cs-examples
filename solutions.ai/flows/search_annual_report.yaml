@@ -1,0 +1,73 @@
+id: search_annual_report
+namespace: solutions.ai
+
+description: |
+  ## Annual Report Summary
+
+  This flow takes in a company name, searches for it's 2024 Annual Report, and if found, provides a summary. The summary focuses on the company's plans in it's data infrastructure, with a bias towards data orchestration. 
+
+  ### Outputs
+
+  The outputs of this report are 
+  - The annual report used for the summary
+  - A markdown formatted summary of the report
+
+inputs:
+  - id: company
+    type: STRING
+  - id: model
+    type: SELECT
+    values:
+      - "gpt-4o-mini"
+
+tasks:
+  - id: look_for_report
+    type: io.kestra.plugin.core.http.Request
+    uri: https://www.googleapis.com/customsearch/v1?key=XXXXXXXX=YYYYYYYY&q={{inputs.company}}+2024+annual+report+filetype:pdf&num=1
+  - id: download_report
+    type: io.kestra.plugin.core.http.Download
+    uri: "{{outputs.look_for_report.body|jq('.items[0].link')|first}}"
+  - id: extract_text
+    type: io.kestra.plugin.scripts.python.Commands
+    namespaceFiles:
+      enabled: true
+    containerImage: paulgrainger/python-ai:latest
+    inputFiles:
+      report.pdf: "{{outputs.download_report.uri}}"
+    commands:
+      - python {{workingDir}}/pdf.py
+  # - id: extract_text_tika
+  #   type: io.kestra.plugin.tika.Parse
+  #   contentType: TEXT
+  #   from: "{{outputs.download_report.uri}}"
+  - id: vertex_summary
+    type: io.kestra.plugin.gcp.vertexai.MultimodalCompletion
+    region: us-central1
+    projectId: "{{namespace.gcpProjectId}}"
+    serviceAccount: "{{secret(namespace='system',key='GCP_SVC_ACCOUNT')}}"
+    contents:
+     - content: |
+        You are a highly technical data amd software infrastructure engineer. You are to review "{{inputs.company}}" latest Annual report in the attached pdf. Summarize the report with a focus on what the companies IT and data strategy is for the coming year(s). In particular focus on data services, data orchestration, real time data, data analytics and IT infrastructure. Format the data in standard markdown. Where possible provide quotations from the text in support of your statement. 
+     - content: "{{outputs.download_report.uri}}"
+       mimeType: "application/pdf"
+      
+  - id: summary
+    type: io.kestra.plugin.openai.ChatCompletion
+    apiKey: "{{secret(namespace='system',key='OPENAI_KEY')}}"
+    model: "{{inputs.model}}"
+    temperature: 0.3
+    clientTimeout: 100
+    prompt: |
+      You are a highly technical data amd software infrastructure engineer. You are to review the following text extracted from "{{inputs.company}}" latest Annual report. Summarize the report with a focus on what the companies IT and data strategy is for the coming year(s). In particular focus on data services, data orchestration, real time data, data analytics and IT infrastructure. Format the data in standard markdown. Where possible provide quotations from the text in support of your statement. The text is as follows: {{outputs.extract_text.vars['report_text']}}
+
+outputs:
+  - id: report
+    type: FILE
+    displayName: Report
+    description: "{{inputs.company}} Annual Report this data is based off"
+    value: "{{outputs.download_report.uri}}"
+  - id: summary
+    type: STRING
+    description: A Markdown formatted string of the summary
+    value: "{{outputs.summary['choices'][0].message.content}}"
+

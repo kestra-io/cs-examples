@@ -1,0 +1,31 @@
+---
+- name: Run PowerShell Script on Windows
+  hosts: windows_vms
+  gather_facts: no
+  tasks:
+    - name: Execute Reverse Zone Creation Script
+      ansible.windows.win_shell: |
+        # --- Configuration ---
+        $ReverseZone = "{{ (kv('dcConfig').subnetCIDR | split('\.'))[1] }}.{{ (kv('dcConfig').subnetCIDR | split('\.'))[0] }}.in-addr.arpa"
+        $ClientName  = "{{ inputs.vmName }}"
+        $Domain      = "{{ kv('dcConfig').domainName }}"
+        $PtrName     = "{{ (inputs.ipAddress | split('\.'))[3] }}.{{ (inputs.ipAddress | split('\.'))[2] }}"
+
+        # 1. Remove from Active Directory
+        Write-Host "Removing $ClientName from Active Directory..."
+        Get-ADComputer -Identity $ClientName -ErrorAction SilentlyContinue | Remove-ADComputer -Confirm:$false
+
+        # 2. Remove Forward DNS Record
+        Write-Host "Deleting Forward DNS Record..."
+        Remove-DnsServerResourceRecord -ZoneName $Domain -Name $ClientName -RRType "A" -Force -ErrorAction SilentlyContinue
+
+        # 3. Remove Reverse DNS Record
+        Write-Host "Deleting Reverse DNS Record..."
+        Remove-DnsServerResourceRecord -ZoneName $ReverseZone -Name $PtrName -RRType "PTR" -Force -ErrorAction SilentlyContinue
+
+        Write-Host "Cleanup Complete for $ClientName."
+      register: dns_script_output
+
+    - name: Print PowerShell Output to Kestra Logs
+      debug:
+        var: dns_script_output.stdout_lines

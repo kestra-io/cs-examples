@@ -1,0 +1,65 @@
+---
+- name: Execute AD Join Bash Script
+  hosts: linux_vms
+  become: yes # Run as sudo/root
+  tasks:
+    - name: Run the finalized AD join script
+      ansible.builtin.shell: |
+        #!/bin/bash
+        set -e
+        # logs available at sudo journalctl -u google-startup-scripts.service
+        # 1. Variables
+        DC_IP="{{ kv('dcConfig').internalIPAddress }}"
+        DC_FQDN="{{ kv('dcConfig').vmName }}.{{ kv('dcConfig').domainName }}"
+        DOMAIN="{{ kv('dcConfig').domainName }}"
+        ADMIN_PASS="{{ secret('AD_CONTROLLER_PW') }}"
+
+        # 2. The Kerberos Fix (/etc/hosts)
+        if ! grep -q "$DOMAIN" /etc/hosts; then
+          echo -e "$DC_IP\t$DC_FQDN\t$DOMAIN" >> /etc/hosts
+        fi
+
+        # 3. Wait for Windows DC to be "Ready" (DNS Port 53)
+        echo "Waiting for Windows DC at $DC_IP..."
+        until nc -z -v -w5 $DC_IP 53; do
+          sleep 10
+        done
+
+        # 4. Install Packages
+        apt-get update
+        DEBIAN_FRONTEND=noninteractive apt-get install -y realmd sssd sssd-tools adcli samba-common-bin ntpdate
+
+        # 5. Point DNS to Windows DC
+        echo "[Resolve]
+        DNS=$DC_IP
+        Domains=$DOMAIN" > /etc/systemd/resolved.conf
+        # 5. Point DNS to Windows DC (GCP Netplan Override)
+        echo "Overriding GCP DHCP DNS..."
+        cat <<EOF > /etc/netplan/99-custom-dns.yaml
+        network:
+          version: 2
+          ethernets:
+            ens4:
+              dhcp4-overrides:
+                use-dns: false
+              dhcp6-overrides:
+                use-dns: false
+              nameservers:
+                addresses: [$DC_IP]
+                search: [$DOMAIN]
+        EOF
+        netplan apply
+        systemctl restart systemd-resolved
+
+        # 6. Time Sync Retry Loop (Protects against set -e failures)
+        echo "Synchronizing time with DC..."
+        until ntpdate -u $DC_IP; do
+          echo "NTP not ready yet, retrying in 5 seconds..."
+          sleep 5
+        done
+
+        # 7. Join the Domain
+        echo "$ADMIN_PASS" | realm join $DOMAIN -U Administrator --verbose
+
+        # 8. Allow Home Directory Creation
+        pam-auth-update --enable mkhomedir

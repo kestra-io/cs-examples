@@ -1,0 +1,156 @@
+id: aiGeneratedFlow
+namespace: solutions.ai
+
+labels:
+  - key: "maintainer"
+    value: "aiCoPilot"
+  - key: "kestra.version"
+    value: "1.0.x"
+  - key: "domain"
+    value: "infra"
+
+inputs:
+  - id: cloudProvider
+    type: STRING
+    description: The cloud provider for the VM.
+    defaults: aws
+  - id: vmSize
+    type: STRING
+    description: The size of the VM.
+    defaults: small
+
+tasks:
+  - id: generate_hostname
+    type: io.kestra.plugin.scripts.python.Script
+    description: Generate a hostname based on provided inputs.
+    dependencies:
+      - kestra
+    script: |
+      from kestra import Kestra
+      cloud_provider = "{{ inputs.cloudProvider }}"
+      vm_size = "{{ inputs.vmSize }}"
+      hostname = f"vm-{cloud_provider}-{vm_size}-{{ execution.id[:8] }}"
+      Kestra.outputs({"hostname": hostname})
+
+  - id: fetch_ip_address
+    type: io.kestra.plugin.core.http.Request
+    description: Fetch an IP address from an IPAM system.
+    uri: https://api.ipam.example.com/allocate
+    method: POST
+    contentType: application/json
+    body: |
+      {
+        "hostname": "{{ outputs.generate_hostname.vars.hostname }}"
+      }
+    # Assuming the IPAM returns a JSON body like {"ipAddress": "192.168.1.100"}
+    # The IP address will be available as outputs.fetch_ip_address.body.ipAddress
+    # For demonstration, we will manually set a var here, but in a real scenario,
+    # you would use a JQ expression to parse the actual response.
+
+  - id: create_vm
+    type: io.kestra.plugin.ee.vmware.vcenter.CreateVm
+    description: Create a virtual machine in vCenter.
+    datacenter: "datacenter1"
+    server: "vcenter.example.com"
+    username: "{{ secret('VMWARE_VCENTER_USERNAME') }}"
+    password: "{{ secret('VMWARE_VCENTER_PASSWORD') }}"
+    hostname: "{{ outputs.generate_hostname.vars.hostname }}"
+    vmName: "{{ outputs.generate_hostname.vars.hostname }}"
+    networkName: "VM Network"
+    datastoreName: "datastore1"
+    isoName: "ubuntu-24.04.2-desktop-amd64.iso"
+    cpuCount: 2
+    memorySize: 4096
+    diskSize: 50000
+    guestOsId: "ubuntu64Guest"
+    powerOn: true
+
+  - id: parallel_ad_dns
+    type: io.kestra.plugin.core.flow.Parallel
+    tasks:
+      - id: add_vm_to_active_directory
+        type: io.kestra.plugin.scripts.powershell.Script
+        description: Add the VM to Active Directory.
+        script: |
+          # Placeholder for Active Directory commands
+          # For example: Add-Computer -NewName "{{ outputs.generate_hostname.vars.hostname }}" -DomainName "example.com" -Credential (Get-Credential)
+          Write-Host "Adding VM '{{ outputs.generate_hostname.vars.hostname }}' to Active Directory..."
+          # Simulate AD operation
+          Start-Sleep -Seconds 5
+          Write-Host "VM '{{ outputs.generate_hostname.vars.hostname }}' added to Active Directory."
+
+      - id: create_dns_record
+        type: io.kestra.plugin.scripts.powershell.Script
+        description: Create a DNS record for the new VM.
+        script: |
+          # Placeholder for DNS record creation commands
+          # For example: Add-DnsServerResourceRecordA -ZoneName "example.com" -Name "{{ outputs.generate_hostname.vars.hostname }}" -IPv4Address "{{ outputs.fetch_ip_address.vars.ipAddress }}"
+          Write-Host "Creating DNS record for '{{ outputs.generate_hostname.vars.hostname }}' with IP '{{ outputs.fetch_ip_address.vars.ipAddress }}'..."
+          # Simulate DNS operation
+          Start-Sleep -Seconds 3
+          Write-Host "DNS record created."
+
+  - id: install_application
+    type: io.kestra.plugin.ansible.cli.AnsibleCLI
+    description: Install a specific application on the VM using Ansible.
+    inputFiles:
+      inventory.ini: |
+        [{{ inputs.cloudProvider }}]
+        {{ outputs.generate_hostname.vars.hostname }} ansible_host={{ outputs.fetch_ip_address.vars.ipAddress }} ansible_user=admin ansible_password={{ secret('VMWARE_VCENTER_PASSWORD') }}
+      playbook.yml: |
+        ---
+        - hosts: "{{ inputs.cloudProvider }}"
+          become: true
+          tasks:
+            - name: Install Nginx
+              ansible.builtin.apt:
+                name: nginx
+                state: present
+    containerImage: cytopia/ansible:latest-tools
+    commands:
+      - ansible-playbook -i inventory.ini playbook.yml
+
+  - id: vm_compliance_check
+    type: io.kestra.plugin.scripts.powershell.Script
+    description: Ensure VM compliance for password length.
+    script: |
+      # Placeholder for VM compliance check (e.g., password policy)
+      # This is a dummy check; replace with actual compliance logic.
+      $minPasswordLength = 8
+      $currentPasswordLength = (Get-LocalUser -Name "Administrator").PasswordRequires.MinimumPasswordLength
+      if ($currentPasswordLength -lt $minPasswordLength) {
+          Write-Error "Password length compliance failed: Current length is $currentPasswordLength, required is $minPasswordLength."
+          exit 1
+      } else {
+          Write-Host "Password length compliance passed."
+      }
+
+  - id: approval_pause
+    type: io.kestra.plugin.core.flow.Pause
+    description: Human approval step before finalizing VM creation.
+    onResume:
+      - id: approved
+        type: BOOL
+        description: Was the VM creation approved?
+        defaults: true
+      - id: reason
+        type: STRING
+        description: Reason for approval or rejection.
+        defaults: "Approved by automation"
+
+  - id: send_notification
+    type: io.kestra.plugin.email.MailSend
+    description: Send a notification about the VM creation status.
+    from: "no-reply@kestra.io"
+    to: "admin@company.com"
+    subject: "VM Creation Status for {{ outputs.generate_hostname.vars.hostname }}"
+    htmlTextContent: |
+      <h1>VM Creation Report</h1>
+      <p>VM Hostname: <strong>{{ outputs.generate_hostname.vars.hostname }}</strong></p>
+      <p>IP Address: <strong>{{ outputs.fetch_ip_address.vars.ipAddress }}</strong></p>
+      <p>Cloud Provider: <strong>{{ inputs.cloudProvider }}</strong></p>
+      <p>VM Size: <strong>{{ inputs.vmSize }}</strong></p>
+      <p>VM Creation Status: <strong>SUCCESS</strong></p>
+      <p>Approval Status: <strong>{{ outputs.approval_pause.onResume.approved ? 'Approved' : 'Rejected' }}</strong></p>
+      <p>Approval Reason: <strong>{{ outputs.approval_pause.onResume.reason }}</strong></p>
+      <p>Execution URL: <a href="http://localhost:8080/ui/executions/{{ flow.namespace }}/{{ flow.id }}/{{ execution.id }}">Link to Execution</a></p>

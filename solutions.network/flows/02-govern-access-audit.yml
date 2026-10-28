@@ -1,0 +1,80 @@
+id: 02-govern-access-audit
+namespace: solutions.network
+description: |
+  # Access Control Audit
+
+  Generates a daily RBAC audit report for all network namespaces.
+  Enumerates service accounts, role assignments, and last-activity timestamps.
+  Flags stale accounts (90+ days inactive) and external contractor accounts for review.
+
+  **Demo:** After running this flow, navigate to Administration → Tenants → Namespaces
+  in the Kestra UI to show the live namespace hierarchy. This flow *reports* on what
+  the RBAC UI *manages* — the audit trail that compliance teams need.
+
+labels:
+  chapter: "02-govern"
+  demo: network-orchestration
+
+tasks:
+  - id: generate_rbac_audit
+    type: io.kestra.plugin.scripts.python.Script
+    description: |
+      In production: calls `GET /api/v1/serviceaccounts` and `GET /api/v1/rolebindings`
+      on the Kestra management API, enriched with last-execution timestamps from the
+      audit log. Here we use representative data to show the output format.
+    taskRunner:
+      type: io.kestra.plugin.scripts.runner.docker.Docker
+    containerImage: python:3.12-slim
+    script: |
+      import json
+      from datetime import datetime
+
+      accounts = [
+          {"account": "svc-netops-automation",  "role": "Editor", "team": "Network Ops",  "last_used_days": 1,   "namespaces": ["solutions.network", "solutions.network.emea"]},
+          {"account": "svc-security-readonly",  "role": "Viewer", "team": "Security",     "last_used_days": 3,   "namespaces": ["solutions.network"]},
+          {"account": "svc-platform-admin",     "role": "Admin",  "team": "Platform",     "last_used_days": 0,   "namespaces": ["solutions.network.*"]},
+          {"account": "svc-cmdb-integration",   "role": "Editor", "team": "ITSM",         "last_used_days": 12,  "namespaces": ["solutions.network"]},
+          {"account": "svc-legacy-monitoring",  "role": "Viewer", "team": "Network Ops",  "last_used_days": 97,  "namespaces": ["solutions.network.emea"]},
+          {"account": "svc-temp-consultant",    "role": "Editor", "team": "External",     "last_used_days": 142, "namespaces": ["solutions.network.*"]},
+      ]
+
+      stale    = [a for a in accounts if a["last_used_days"] >= 90]
+      external = [a for a in accounts if a["team"] == "External"]
+
+      print("=" * 60)
+      print(f"RBAC AUDIT — solutions.network.* — {datetime.now().strftime('%Y-%m-%d')}")
+      print(f"Total service accounts : {len(accounts)}")
+      print(f"Stale (90+ days)       : {len(stale)}")
+      print(f"External contractors   : {len(external)}")
+      print("=" * 60)
+
+      for a in stale:
+          print(f"⚠  STALE  | {a['account']:35s} | {a['role']:7s} | {a['last_used_days']}d inactive | namespaces: {a['namespaces']}")
+
+      for a in external:
+          print(f"⚠  EXTERN | {a['account']:35s} | {a['role']:7s} | team: {a['team']}")
+
+      result = {
+          "audit_date": datetime.now().isoformat(),
+          "total_accounts": len(accounts),
+          "stale_count": len(stale),
+          "external_count": len(external),
+          "stale_accounts": [a["account"] for a in stale],
+          "external_accounts": [a["account"] for a in external]
+      }
+      print("\nJSON output:")
+      print(json.dumps(result, indent=2))
+
+  - id: store_audit_result
+    type: io.kestra.plugin.core.kv.Set
+    description: "Persists the audit result for the compliance dashboard and historical trending."
+    key: "RBAC_AUDIT_LATEST"
+    value: "{{ execution.id }}"
+    ttl: P90D
+
+triggers:
+  - id: daily_06_utc
+    type: io.kestra.plugin.core.trigger.Schedule
+    description: "Runs every day at 06:00 UTC. Report reviewed by security team at morning standup."
+    cron: "0 6 * * *"
+    disabled: true
