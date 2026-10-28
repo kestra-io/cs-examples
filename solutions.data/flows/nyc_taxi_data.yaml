@@ -1,5 +1,5 @@
 id: nyc_taxi_data
-namespace: solutions.data.raw
+namespace: solutions.data
 description: |
   Flow to pull some sample NYC Taxi data files to trigger ETL pipeline in Kestra
 

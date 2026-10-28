@@ -1,5 +1,5 @@
 id: stage_taxi_data
-namespace: solutions.data.staging
+namespace: solutions.data
 
 inputs:
   - id: taxi_data
@@ -11,7 +11,7 @@ triggers:
   - id: on_taxi_data_raw_completion
     type: io.kestra.plugin.core.trigger.Flow
     dependsOn:
-        - namespace: solutions.data.raw
+        - namespace: solutions.data
           flowId: nyc_taxi_data
           states: [SUCCESS]
     inputs:

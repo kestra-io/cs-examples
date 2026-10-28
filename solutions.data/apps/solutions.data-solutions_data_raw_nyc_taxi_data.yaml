@@ -1,7 +1,7 @@
 id: solutions_data_raw_nyc_taxi_data
 type: io.kestra.plugin.ee.apps.Execution
 displayName: Submit taxi file override data
-namespace: solutions.data.raw
+namespace: solutions.data
 flowId: nyc_taxi_data
 access: 
     type: PRIVATE

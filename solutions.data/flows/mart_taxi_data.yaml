@@ -1,5 +1,5 @@
 id: mart_taxi_data
-namespace: solutions.data.mart
+namespace: solutions.data
 description: |
   Flow to create aggregations on taxi data
 
@@ -7,7 +7,7 @@ triggers:
   - id: on_taxi_data_staging_completion
     type: io.kestra.plugin.core.trigger.Flow
     dependsOn:
-        - namespace: solutions.data.staging
+        - namespace: solutions.data
           flowId: stage_taxi_data
           states: [SUCCESS]
 
