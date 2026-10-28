@@ -1,8 +1,8 @@
 resource "google_compute_instance" "default" {
-  name         = "{{ outputs['generateCustomHostname'].outputs['hostname'] }}"
+  name         = "{{ inputs.vmName }}"
   machine_type = "{{ inputs.vmSize }}"
   zone         = "{{ inputs.zone }}"
-  project = "{{ inputs.billingAccount }}"
+  project      = "{{ inputs.billingAccount }}"
 
   boot_disk {
     initialize_params {
@@ -11,17 +11,17 @@ resource "google_compute_instance" "default" {
   }
 
   network_interface {
-    network = "{{ inputs.network }}"
-    subnetwork = "{{ inputs.subnet }}"
+    network            = "{{ inputs.network }}"
+    subnetwork         = "{{ inputs.subnet }}"
     subnetwork_project = "{{ inputs.billingAccount }}"
     access_config {}
-    network_ip = "{{ outputs.getIPAddress["vars"]["ipAddress"] }}"
+    network_ip = "{{ inputs.ipAddress }}"
   }
 
   metadata = {
     enable-oslogin = false
-    "ssh-keys" = <<EOT
-      caxe:{{ secret('SSH_PUB_KEY') }}
+    "ssh-keys"     = <<EOT
+      root:{{ secret('SSH_PUB_KEY') }}
      EOT
   }
 

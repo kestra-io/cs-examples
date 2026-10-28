@@ -2,6 +2,7 @@ id: solutions_infra_patchVM
 type: io.kestra.plugin.ee.apps.Execution
 namespace: solutions.infra
 displayName: Patch VM
+thumbnail: nsFile:///patchVM/icon.svg
 flowId: patchVM
 
 access:

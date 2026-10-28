@@ -2,6 +2,7 @@ id: solutions_infra_patchOrchestration
 type: io.kestra.plugin.ee.apps.Execution
 namespace: solutions.infra
 displayName: Patch Orchestration
+thumbnail: nsFile:///patchOrchestration/icon.svg
 flowId: patchOrchestration
 
 access:
