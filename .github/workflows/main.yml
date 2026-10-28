@@ -17,5 +17,5 @@ jobs:
         uses: kestra-io/github-actions/validate-flows@main
         with:
           directory: ./
-          server: https://partners.kestra.cloud
+          server: https://demo.kestra-technologies.kestra.cloud
           apiToken: ${{ secrets.API_KEY }}
