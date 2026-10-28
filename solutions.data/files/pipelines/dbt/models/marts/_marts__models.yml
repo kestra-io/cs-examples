@@ -1,0 +1,16 @@
+version: 2
+
+models:
+  - name: fct_taxi_trips
+    description: One row per taxi trip, enriched with pickup/dropoff zone and borough names.
+    columns:
+      - name: pickup_borough
+        tests:
+          - not_null
+
+  - name: agg_daily_zone_activity
+    description: Daily trip counts, revenue, and averages aggregated by pickup zone.
+    columns:
+      - name: total_trips
+        tests:
+          - not_null
