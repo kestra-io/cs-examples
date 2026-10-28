@@ -2,16 +2,16 @@ id: unitTest-orderItem
 flowId: orderItem
 namespace: solutions.ops
 description: |
-  Test ID	                      Scenario	
-  `validProductInStock`	        Product is available
-  `validProductLowStock`	      Product has low stock
-  `validProductDiscontinued`	  Product is Discontinued
-  `invalidProduct`	            Product lookup fails (404)
+  Test ID                       Scenario 
+  `validProductInStock`         Product is available
+  `validProductLowStock`       Product has low stock
+  `validProductDiscontinued`   Product is Discontinued
+  `invalidProduct`             Product lookup fails (404)
 testCases:
   - id: validProductInStock
     type: io.kestra.core.tests.flow.UnitTest
     description: |
-      Test Case	Expectation
+      Test Case Expectation
       Valid product + "In Stock" = Runs orderItem, skips sendRestockAlert
     fixtures:
       inputs:
@@ -62,8 +62,8 @@ testCases:
   - id: validProductLowStock
     type: io.kestra.core.tests.flow.UnitTest
     description: |
-      Test Case	Expectation
-      Valid product + "Low Stock"	= Runs orderItem, skips sendRestockAlert
+      Test Case Expectation
+      Valid product + "Low Stock" = Runs orderItem, skips sendRestockAlert
     fixtures:
       inputs:
         category: fragrances
@@ -113,8 +113,8 @@ testCases:
   - id: validProductDiscontinued
     type: io.kestra.core.tests.flow.UnitTest
     description: |
-      Test Case	Expectation
-      Valid product + "Discontinued"	Skips both
+      Test Case Expectation
+      Valid product + "Discontinued" Skips both
     fixtures:
       inputs:
         category: fragrances
@@ -150,8 +150,8 @@ testCases:
   - id: invalidProduct
     type: io.kestra.core.tests.flow.UnitTest
     description: |
-      Test Case	Expectation
-      Invalid product / fetch fails	= Runs cancelOrder only
+      Test Case Expectation
+      Invalid product / fetch fails = Runs cancelOrder only
     fixtures:
       inputs:
         category: fragrances
