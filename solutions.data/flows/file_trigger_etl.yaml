@@ -32,7 +32,7 @@ errors:
     inputs:
       text: |
         Failed flow {{flow.namespace}}.{{flow.id}} id: {{execution.id}}. Please see details here: 
-          https://partners.kestra.cloud/ui/demo/executions/{{flow.namespace}}/{{flow.id}}/{{execution.id}}/logs
+          https://kestra.example.com/ui/my-tenant/executions/{{flow.namespace}}/{{flow.id}}/{{execution.id}}/logs
 
 tasks:
   - id: each

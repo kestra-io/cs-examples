@@ -17,7 +17,7 @@ jobs:
     steps: 
       - name: send_kestra_webhook
         run: |
-          curl -X POST "https://partners.kestra.cloud/api/v1/demo/executions/webhook/system/github_sys_sync_namespacefiles/${{ secrets.KESTRA_WEBHOOK_KEY }}" \
+          curl -X POST "https://kestra.example.com/api/v1/my-tenant/executions/webhook/system/github_sys_sync_namespacefiles/${{ secrets.KESTRA_WEBHOOK_KEY }}" \
           -H "Content-Type: application/json" \
           -d '{
             "commit_sha": "${{ github.sha }}",
