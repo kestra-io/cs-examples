@@ -37,7 +37,7 @@ tasks:
     password: "{{ secret('GIT_HUB_PAT') }}"
     branch: "{{ inputs.source == 'GIT' ? 'main' : 'feature/syncTenant' }}"
     gitDirectory: kestra
-    kestraUrl: https://demo.kestra-technologies.kestra.cloud
+    kestraUrl: https://kestra.example.com
     auth:
       username: dummy
       password: dummy

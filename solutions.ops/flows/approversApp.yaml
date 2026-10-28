@@ -36,7 +36,7 @@ tasks:
     tasks:
       - id: approve
         type: io.kestra.plugin.core.http.Request
-        uri: https://demo.kestra-technologies.kestra.cloud/api/v1/solutions/executions/{{ item.value }}/resume
+        uri: https://kestra.example.com/api/v1/my-tenant/executions/{{ item.value }}/resume
         headers:
           Authorization: "Bearer {{ secret('KESTRA_CLOUD_API_TOKEN')}}"
         method: POST
