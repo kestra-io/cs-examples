@@ -1,6 +1,6 @@
 ---
 # Read-only. Confirms every targeted switch answers and records the software
-# it runs. Safe to run at any time.
+# it runs on the switch's Kestra asset as `os_version`. Safe to run at any time.
 - name: Pre-check switches
   hosts: all
   gather_facts: false
@@ -13,17 +13,24 @@
 
     - name: Record the running version
       ansible.builtin.set_fact:
-        running_version: >-
-          {{ 'lab mode' if (kestra_simulate | bool)
-             else (show_version.stdout | regex_search('(?:NXOS: version|, Version)\s+([^\s,]+)', '\1') | first) }}
+        asset_facts:
+          os_version: >-
+            {{ (simulated_versions[ansible_network_os] ~ ' (simulated)') if (kestra_simulate | bool)
+               else (show_version.stdout | regex_search('(?:NXOS: version|, Version)\s+([^\s,]+)', '\1') | first) }}
+      vars:
+        simulated_versions:
+          cisco.ios.ios: "17.9.4"
+          cisco.nxos.nxos: "10.3(4a)"
 
     - name: Show the running version
       ansible.builtin.debug:
-        msg: "{{ inventory_hostname }} runs {{ running_version }}"
+        msg: "{{ inventory_hostname }} runs {{ asset_facts.os_version }}"
 
-    - name: Publish the pre-check results to Kestra
+    # The flow writes each host's keys onto its asset.
+    - name: Publish asset metadata to Kestra
       kestra:
         outputs:
-          running_versions: "{{ dict(ansible_play_hosts | zip(ansible_play_hosts | map('extract', hostvars, 'running_version'))) }}"
+          asset_metadata: "{{ dict(ansible_play_hosts | zip(ansible_play_hosts | map('extract', hostvars, 'asset_facts'))) }}"
       run_once: true
       delegate_to: localhost
+      check_mode: false

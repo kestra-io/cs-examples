@@ -32,3 +32,18 @@
         msg: "{{ inventory_hostname }} ({{ ansible_network_os }}) <- {{ base_config_lines }}"
       changed_when: true
       when: kestra_simulate | bool
+
+    - name: Record what was applied
+      ansible.builtin.set_fact:
+        asset_facts:
+          ntp_servers: "{{ ntp_servers | join(',') }}"
+          syslog_hosts: "{{ syslog_hosts | join(',') }}"
+
+    # Skipped in check mode, so a dry run never records config it did not push.
+    - name: Publish asset metadata to Kestra
+      kestra:
+        outputs:
+          asset_metadata: "{{ dict(ansible_play_hosts | zip(ansible_play_hosts | map('extract', hostvars, 'asset_facts'))) }}"
+      run_once: true
+      delegate_to: localhost
+      when: not ansible_check_mode
