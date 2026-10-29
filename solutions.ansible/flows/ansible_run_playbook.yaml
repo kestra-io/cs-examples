@@ -109,7 +109,7 @@ tasks:
       # Fetches the playbooks at git_ref on every attempt. For a private repo, add
       # -H "Authorization: Bearer {{ secret('GITHUB_TOKEN') }}" to curl.
       - >-
-        mkdir repo && curl -fsSL {{ vars.git_url }}/archive/{{ inputs.git_ref }}.tar.gz
+        mkdir -p repo && curl -fsSL {{ vars.git_url }}/archive/{{ inputs.git_ref }}.tar.gz
         | tar xz --strip-components=1 -C repo --wildcards '*/{{ vars.playbook_dir }}/*'
     checkMode: "{{ inputs.check_mode }}"
     diff: true
@@ -191,16 +191,16 @@ tasks:
     type: io.kestra.plugin.core.execution.Fail
     runIf: "{{ (outputs.playbook.exitCode ?? 1) != 0 }}"
     errorMessage: >-
-      {{ inputs.playbook }} failed (exit code {{ outputs.playbook.exitCode ?? 'unknown' }}) on:
-      {{ fromJson(outputs.results.values.hosts) | jq('[ .[] | select(.status == "failed" or .status == "unreachable") | .host + " (" + .status + ")" ] | join(", ")') | first }}.
-      The results are recorded on each switch's asset.
+      {%- set failed = fromJson(outputs.results.values.hosts) | jq('[ .[] | select(.status == "failed" or .status == "unreachable") | .host + " (" + .status + ")" ] | join(", ")') | first -%}
+      {{ inputs.playbook }} failed (exit code {{ outputs.playbook.exitCode ?? 'unknown' }})
+      {{ failed is empty ? 'before reaching any switch. See the playbook task logs.' : 'on ' ~ failed ~ '. The result is recorded on each switch asset.' }}
 
 outputs:
   - id: hosts
     type: JSON
     description: Per-switch status and changed-task count.
-    value: "{{ outputs.results.values.hosts }}"
+    value: "{{ outputs.results.values.hosts ?? '[]' }}"
   - id: asset_metadata
     type: JSON
     description: Asset metadata keys the playbook published, one entry per switch and key.
-    value: "{{ outputs.results.values.metadata }}"
+    value: "{{ outputs.results.values.metadata ?? '[]' }}"
