@@ -5,7 +5,7 @@ description: |
 
   1. **Inventory**: built from the `NetworkDevice` assets in this namespace.
      Each asset's `group` metadata becomes an Ansible inventory group.
-  2. **Playbook**: clones the playbook repo at `git_ref` and runs `playbook`
+  2. **Playbook**: downloads the playbooks from Git at `git_ref` and runs `playbook`
      with `--limit <group>`. A change merged to a playbook reaches the next
      run without editing this flow. Failed runs are retried up to 3 times.
   3. **Asset write-back**: every switch the playbook ran on gets its result
@@ -87,51 +87,45 @@ tasks:
     runIf: "{{ fromJson(outputs.inventory.values.inventory).all.children | length == 0 }}"
     errorMessage: "No NetworkDevice assets in {{ flow.namespace }}. Run ansible_register_devices first."
 
-  - id: run
-    type: io.kestra.plugin.core.flow.WorkingDirectory
+  - id: playbook
+    type: io.kestra.plugin.ansible.cli.AnsibleCLI
+    # Lets the asset write-back record failed and unreachable switches;
+    # `failed_hosts` fails the execution afterwards.
+    allowFailure: true
+    taskRunner:
+      type: io.kestra.plugin.core.runner.Process
+    # To run in a container instead, replace taskRunner and the venv lines of
+    # beforeCommands with:
+    # taskRunner:
+    #   type: io.kestra.plugin.scripts.runner.docker.Docker
+    # containerImage: cytopia/ansible:latest-tools
     inputFiles:
       inventory.yml: "{{ outputs.inventory.values.inventory }}"
-    tasks:
-      - id: clone
-        type: io.kestra.plugin.git.Clone
-        url: "{{ vars.git_url }}"
-        branch: "{{ inputs.git_ref }}"
-        directory: repo
-        # For a private repo:
-        # username: x-access-token
-        # password: "{{ secret('GITHUB_TOKEN') }}"
-
-      - id: playbook
-        type: io.kestra.plugin.ansible.cli.AnsibleCLI
-        # Lets the asset write-back record failed and unreachable switches;
-        # `failed_hosts` fails the execution afterwards.
-        allowFailure: true
-        taskRunner:
-          type: io.kestra.plugin.core.runner.Process
-        # To run in a container instead, replace taskRunner and beforeCommands with:
-        # taskRunner:
-        #   type: io.kestra.plugin.scripts.runner.docker.Docker
-        # containerImage: cytopia/ansible:latest-tools
-        beforeCommands:
-          - >-
-            [ -x {{ vars.ansible_venv }}/bin/ansible-playbook ]
-            || (uv venv -q {{ vars.ansible_venv }} && uv pip install -q --python {{ vars.ansible_venv }} ansible ansible-pylibssh)
-          - export PATH={{ vars.ansible_venv }}/bin:$PATH
-        checkMode: "{{ inputs.check_mode }}"
-        diff: true
-        streamLogs: true
-        limit: "{{ inputs.group }}"
-        env:
-          NET_USERNAME: "{{ inputs.simulate ? 'lab' : secret('NETWORK_SSH_USERNAME') }}"
-          NET_PASSWORD: "{{ inputs.simulate ? 'lab' : secret('NETWORK_SSH_PASSWORD') }}"
-        retry:
-          type: constant
-          interval: PT15S
-          maxAttempts: 3
-        commands:
-          - >-
-            ansible-playbook -i inventory.yml repo/{{ vars.playbook_dir }}/{{ inputs.playbook }}
-            {{ inputs.simulate ? '-e ansible_connection=local -e kestra_simulate=true' : '' }}
+    beforeCommands:
+      - >-
+        [ -x {{ vars.ansible_venv }}/bin/ansible-playbook ]
+        || (uv venv -q {{ vars.ansible_venv }} && uv pip install -q --python {{ vars.ansible_venv }} ansible ansible-pylibssh)
+      - export PATH={{ vars.ansible_venv }}/bin:$PATH
+      # Fetches the playbooks at git_ref on every attempt. For a private repo, add
+      # -H "Authorization: Bearer {{ secret('GITHUB_TOKEN') }}" to curl.
+      - >-
+        mkdir repo && curl -fsSL {{ vars.git_url }}/archive/{{ inputs.git_ref }}.tar.gz
+        | tar xz --strip-components=1 -C repo --wildcards '*/{{ vars.playbook_dir }}/*'
+    checkMode: "{{ inputs.check_mode }}"
+    diff: true
+    streamLogs: true
+    limit: "{{ inputs.group }}"
+    env:
+      NET_USERNAME: "{{ inputs.simulate ? 'lab' : secret('NETWORK_SSH_USERNAME') }}"
+      NET_PASSWORD: "{{ inputs.simulate ? 'lab' : secret('NETWORK_SSH_PASSWORD') }}"
+    retry:
+      type: constant
+      interval: PT15S
+      maxAttempts: 3
+    commands:
+      - >-
+        ansible-playbook -i inventory.yml repo/{{ vars.playbook_dir }}/{{ inputs.playbook }}
+        {{ inputs.simulate ? '-e ansible_connection=local -e kestra_simulate=true' : '' }}
 
   - id: results
     type: io.kestra.plugin.core.output.OutputValues
