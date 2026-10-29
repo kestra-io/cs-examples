@@ -52,7 +52,7 @@ inputs:
 
 variables:
   git_url: https://github.com/kestra-io/cs-examples
-  playbook_dir: solutions.ansible/files/playbooks/network
+  playbook_dir: solutions.assets/files/playbooks/network
   # The Process runner uses Ansible from this virtualenv on the worker, and
   # creates it on first use. The `ansible` package bundles the cisco.ios,
   # cisco.nxos and ansible.netcommon collections.

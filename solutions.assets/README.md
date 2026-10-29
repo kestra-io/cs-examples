@@ -5,6 +5,9 @@
 > [Assets](https://kestra.io/docs/enterprise/governance/assets) and the `assets()` function,
 > which the open-source edition rejects.
 
+This README covers the Ansible example in this folder: the two `ansible_*` flows listed below and the
+playbooks in `files/playbooks/network`. The other flows in `solutions.assets` are separate examples.
+
 This example runs an Ansible playbook from Git against a group of switches and writes the results back to
 the switches. The switches are stored as Kestra `NetworkDevice` assets, and each asset's `group` metadata
 is its Ansible inventory group.
