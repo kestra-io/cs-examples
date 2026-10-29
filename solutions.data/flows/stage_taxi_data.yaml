@@ -111,8 +111,6 @@ tasks:
         - id: demo.raw.taxi_zones_raw
           type: io.kestra.plugin.ee.assets.Table      
     containerImage: ghcr.io/kestra-io/dbt-snowflake:latest
-    taskRunner:
-      type: io.kestra.plugin.scripts.runner.docker.Docker
     namespaceFiles:
       enabled: true
       namespaces:

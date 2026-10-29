@@ -17,8 +17,6 @@ tasks:
     assets:
       enableAuto: true
     containerImage: ghcr.io/kestra-io/dbt-snowflake:latest
-    taskRunner:
-      type: io.kestra.plugin.scripts.runner.docker.Docker
     namespaceFiles:
       enabled: true
       namespaces:
