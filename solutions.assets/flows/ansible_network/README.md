@@ -5,8 +5,8 @@
 > [Assets](https://kestra.io/docs/enterprise/governance/assets) and the `assets()` function,
 > which the open-source edition rejects.
 
-This README covers the Ansible example in this folder: the two `ansible_*` flows listed below and the
-playbooks in `files/playbooks/network`. The other flows in `solutions.assets` are separate examples.
+The two flows and this README live in `solutions.assets/flows/ansible_network/`, and the playbooks in
+`solutions.assets/files/playbooks/network/`. Both flows deploy to the `solutions.assets` namespace.
 
 This example runs an Ansible playbook from Git against a group of switches and writes the results back to
 the switches. The switches are stored as Kestra `NetworkDevice` assets, and each asset's `group` metadata
@@ -14,8 +14,8 @@ is its Ansible inventory group.
 
 | Flow | What it does |
 |---|---|
-| [`ansible_register_devices`](./flows/ansible_register_devices.yaml) | Registers eight sample Cisco IOS and NX-OS switches as assets, in the groups `amer_switches`, `apac_switches` and `emea_switches`. |
-| [`ansible_run_playbook`](./flows/ansible_run_playbook.yaml) | Builds an Ansible inventory from the assets, downloads the playbooks from Git, runs the chosen playbook with `--limit <group>`, and writes each switch's result to its asset. |
+| [`ansible_register_devices`](./ansible_register_devices.yaml) | Registers eight sample Cisco IOS and NX-OS switches as assets, in the groups `amer_switches`, `apac_switches` and `emea_switches`. |
+| [`ansible_run_playbook`](./ansible_run_playbook.yaml) | Builds an Ansible inventory from the assets, downloads the playbooks from Git, runs the chosen playbook with `--limit <group>`, and writes each switch's result to its asset. |
 
 ```mermaid
 flowchart LR
@@ -26,7 +26,7 @@ flowchart LR
     W --> A
 ```
 
-The playbooks live in [`files/playbooks/network`](./files/playbooks/network):
+The playbooks live in [`solutions.assets/files/playbooks/network`](../../files/playbooks/network):
 
 | Playbook | What it does | Writes to the asset |
 |---|---|---|
@@ -89,7 +89,7 @@ no results reach the assets.
 | Change | Where |
 |---|---|
 | Your devices | Register your switches as `NetworkDevice` assets with `group`, `ansible_network_os` and `mgmt_ip` metadata. |
-| Device credentials | Create the `NETWORK_SSH_USERNAME` and `NETWORK_SSH_PASSWORD` secrets. They reach Ansible as environment variables, which [`group_vars/all.yml`](./files/playbooks/network/group_vars/all.yml) reads. |
+| Device credentials | Create the `NETWORK_SSH_USERNAME` and `NETWORK_SSH_PASSWORD` secrets. They reach Ansible as environment variables, which [`group_vars/all.yml`](../../files/playbooks/network/group_vars/all.yml) reads. |
 | Your repo | Change `git_url` and `playbook_dir` in `ansible_run_playbook`, and add your playbooks to the `playbook` input. For a private repo, add the `Authorization` header shown on the `playbook` task. |
 | Real execution | Set `simulate: false`. |
 
