@@ -1,5 +1,5 @@
 id: ansible_run_playbook
-namespace: solutions.ansible
+namespace: solutions.assets
 description: |
   # Run an Ansible playbook against a group of switches
 
@@ -23,7 +23,7 @@ inputs:
   - id: group
     type: SELECT
     description: Inventory group to target, from the `group` metadata of the assets.
-    expression: "{{ assets(type='io.kestra.plugin.ee.assets.NetworkDevice', namespace='solutions.ansible') | jq('[\"all\"] + ([ .[].metadata.group ] | unique)') | first }}"
+    expression: "{{ assets(type='io.kestra.plugin.ee.assets.NetworkDevice', namespace='solutions.assets') | jq('[\"all\"] + ([ .[].metadata.group ] | unique)') | first }}"
     defaults: all
   - id: playbook
     type: SELECT
@@ -101,6 +101,7 @@ tasks:
           - cisco.nxos
         checkMode: "{{ inputs.check_mode }}"
         diff: true
+        streamLogs: true
         limit: "{{ inputs.group }}"
         env:
           NET_USERNAME: "{{ inputs.simulate ? 'lab' : secret('NETWORK_SSH_USERNAME') }}"

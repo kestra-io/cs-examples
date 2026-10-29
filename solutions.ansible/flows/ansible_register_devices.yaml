@@ -1,5 +1,5 @@
 id: ansible_register_devices
-namespace: solutions.ansible
+namespace: solutions.assets
 description: |
   # Register switches as Kestra Assets
 

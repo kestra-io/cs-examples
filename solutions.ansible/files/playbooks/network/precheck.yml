@@ -17,6 +17,10 @@
           {{ 'lab mode' if (kestra_simulate | bool)
              else (show_version.stdout | regex_search('(?:NXOS: version|, Version)\s+([^\s,]+)', '\1') | first) }}
 
+    - name: Show the running version
+      ansible.builtin.debug:
+        msg: "{{ inventory_hostname }} runs {{ running_version }}"
+
     - name: Publish the pre-check results to Kestra
       kestra:
         outputs:

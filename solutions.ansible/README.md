@@ -38,12 +38,17 @@ The playbooks live in [`files/playbooks/network`](./files/playbooks/network):
 - **Retries.** A failed playbook run is retried up to 3 times, 15 s apart.
 - **Playbook outputs in Kestra.** Values a playbook sets with the `kestra` module become flow outputs.
 
+> [!NOTE]
+> On Kestra Cloud, AnsibleCLI runs in a Kubernetes pod, and the plugin does not yet get its outputs file
+> back from the pod. The playbook still runs and its output appears in the task logs (`streamLogs: true`),
+> but the `results` flow output is empty there. It is filled on Docker and Process task runners.
+
 ## Run it on a demo instance
 
 No switches or credentials are needed. **Lab mode** (`simulate: true`, the default) runs the playbook with
 `ansible_connection=local`, and each task that would talk to a device logs what it would push instead.
 
-1. Run `ansible_register_devices`. Check the **Assets** tab.
+1. Run `ansible_register_devices` in the `solutions.assets` namespace. Check the **Assets** tab.
 2. Run `ansible_run_playbook` with the defaults.
 3. Try `group: apac_switches` with `playbook: vlans.yml`, then turn on `check_mode`.
 
