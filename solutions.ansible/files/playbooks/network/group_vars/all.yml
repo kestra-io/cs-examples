@@ -7,7 +7,7 @@ ansible_password: "{{ lookup('ansible.builtin.env', 'NET_PASSWORD') }}"
 
 # Kestra passes `-e kestra_simulate=true` in lab mode. The playbooks then skip
 # every task that talks to a device and use the inventory data instead, so the
-# whole workflow runs without real switches.
+# playbooks run without real switches.
 kestra_simulate: false
 
 ntp_servers:
@@ -16,5 +16,8 @@ ntp_servers:
 syslog_hosts:
   - 10.255.1.10
 
-# Overridden per run by the Kestra `vlans` input.
-vlans: []
+# Merged onto access switches by vlans.yml.
+vlans:
+  - {vlan_id: 110, name: USERS}
+  - {vlan_id: 120, name: VOICE}
+  - {vlan_id: 130, name: PRINTERS}

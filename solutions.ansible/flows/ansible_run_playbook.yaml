@@ -1,0 +1,121 @@
+id: ansible_run_playbook
+namespace: solutions.ansible
+description: |
+  # Run an Ansible playbook against a group of switches
+
+  1. **Inventory**: built from the `NetworkDevice` assets in this namespace.
+     Each asset's `group` metadata becomes an Ansible inventory group.
+  2. **Playbook**: clones the playbook repo at `git_ref` and runs `playbook`
+     with `--limit <group>`. A change merged to a playbook reaches the next
+     run without editing this flow. Failed runs are retried up to 3 times.
+
+  **Lab mode** (`simulate: true`, the default) runs the playbook with
+  `ansible_connection=local`, and each task that would talk to a device logs
+  what it would push instead. No switches or credentials are needed.
+
+  **Demo:** run `ansible_register_devices` once, then run this flow. Try
+  `group: apac_switches` with `playbook: vlans.yml`, then turn on `check_mode`.
+
+labels:
+  demo: ansible-network-automation
+
+inputs:
+  - id: group
+    type: SELECT
+    description: Inventory group to target, from the `group` metadata of the assets.
+    expression: "{{ assets(type='io.kestra.plugin.ee.assets.NetworkDevice', namespace='solutions.ansible') | jq('[\"all\"] + ([ .[].metadata.group ] | unique)') | first }}"
+    defaults: all
+  - id: playbook
+    type: SELECT
+    values:
+      - precheck.yml
+      - base_config.yml
+      - vlans.yml
+    defaults: precheck.yml
+  - id: check_mode
+    type: BOOL
+    description: Run in Ansible check mode and show the diff. Nothing is pushed.
+    defaults: false
+  - id: simulate
+    type: BOOL
+    description: Lab mode. Runs the playbook without connecting to a device.
+    defaults: true
+  - id: git_ref
+    type: STRING
+    description: Branch of the playbook repository to run.
+    defaults: main
+
+variables:
+  git_url: https://github.com/kestra-io/cs-examples
+  playbook_dir: solutions.ansible/files/playbooks/network
+
+tasks:
+  - id: inventory
+    type: io.kestra.plugin.core.output.OutputValues
+    description: One inventory group per distinct `group` value, one host per asset.
+    values:
+      inventory: >-
+        {{ assets(type='io.kestra.plugin.ee.assets.NetworkDevice', namespace=flow.namespace)
+           | jq('[ group_by(.metadata.group)[] | {
+                 key: .[0].metadata.group,
+                 value: {
+                   hosts: (map({
+                     key: .id,
+                     value: {
+                       ansible_host: .metadata.mgmt_ip,
+                       ansible_network_os: .metadata.ansible_network_os,
+                       ansible_connection: "ansible.netcommon.network_cli",
+                       role: .metadata.role,
+                       site: .metadata.site
+                     }
+                   }) | from_entries)
+                 }
+               } ] | from_entries | { all: { children: . } }')
+           | first | toJson }}
+
+  - id: no_devices
+    type: io.kestra.plugin.core.execution.Fail
+    runIf: "{{ fromJson(outputs.inventory.values.inventory).all.children | length == 0 }}"
+    errorMessage: "No NetworkDevice assets in {{ flow.namespace }}. Run ansible_register_devices first."
+
+  - id: run
+    type: io.kestra.plugin.core.flow.WorkingDirectory
+    inputFiles:
+      inventory.yml: "{{ outputs.inventory.values.inventory }}"
+    tasks:
+      - id: clone
+        type: io.kestra.plugin.git.Clone
+        url: "{{ vars.git_url }}"
+        branch: "{{ inputs.git_ref }}"
+        directory: repo
+        # For a private repo:
+        # username: x-access-token
+        # password: "{{ secret('GITHUB_TOKEN') }}"
+
+      - id: playbook
+        type: io.kestra.plugin.ansible.cli.AnsibleCLI
+        containerImage: cytopia/ansible:latest-tools
+        galaxyDependencies:
+          - ansible.netcommon
+          - cisco.ios
+          - cisco.nxos
+        checkMode: "{{ inputs.check_mode }}"
+        diff: true
+        limit: "{{ inputs.group }}"
+        env:
+          NET_USERNAME: "{{ inputs.simulate ? 'lab' : secret('NETWORK_SSH_USERNAME') }}"
+          NET_PASSWORD: "{{ inputs.simulate ? 'lab' : secret('NETWORK_SSH_PASSWORD') }}"
+        retry:
+          type: constant
+          interval: PT15S
+          maxAttempts: 3
+        commands:
+          - >-
+            ansible-playbook -i inventory.yml repo/{{ vars.playbook_dir }}/{{ inputs.playbook }}
+            {{ inputs.simulate ? '-e ansible_connection=local -e kestra_simulate=true' : '' }}
+
+outputs:
+  - id: results
+    type: JSON
+    description: Values the playbook published with the `kestra` module.
+    value: "{{ (outputs.playbook.vars.outputs ?? {}) | toJson }}"

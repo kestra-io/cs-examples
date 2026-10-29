@@ -1,6 +1,6 @@
 ---
-# Step 2: NTP and syslog baseline. Honours check mode, so a Kestra dry run
-# reports the diff without touching the device.
+# NTP and syslog baseline. Honours check mode, so a Kestra run with
+# `check_mode` reports the diff without touching the device.
 - name: Apply base configuration
   hosts: all
   gather_facts: false

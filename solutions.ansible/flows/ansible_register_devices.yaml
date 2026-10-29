@@ -1,0 +1,52 @@
+id: ansible_register_devices
+namespace: solutions.ansible
+description: |
+  # Register switches as Kestra Assets
+
+  Registers eight sample Cisco IOS and NX-OS switches as `NetworkDevice`
+  assets. Each asset's `group` metadata is the Ansible inventory group it
+  belongs to (`amer_switches`, `apac_switches`, `emea_switches`).
+
+  `ansible_run_playbook` builds its Ansible inventory from these assets, so
+  adding a switch to a group means adding an asset, not editing an inventory
+  file.
+
+  Re-running is safe: assets are keyed on hostname and their metadata is
+  updated in place.
+
+labels:
+  demo: ansible-network-automation
+
+variables:
+  devices:
+    - {hostname: sfo1-acc-sw01, group: amer_switches, model: C9300-48P, ansible_network_os: cisco.ios.ios, role: access-switch, site: sfo1, mgmt_ip: 10.10.1.11}
+    - {hostname: sfo1-acc-sw02, group: amer_switches, model: C9300-48P, ansible_network_os: cisco.ios.ios, role: access-switch, site: sfo1, mgmt_ip: 10.10.1.12}
+    - {hostname: iad1-core-sw01, group: amer_switches, model: N9K-C93180YC, ansible_network_os: cisco.nxos.nxos, role: core-switch, site: iad1, mgmt_ip: 10.10.2.1}
+    - {hostname: hyd1-acc-sw01, group: apac_switches, model: C9300-24T, ansible_network_os: cisco.ios.ios, role: access-switch, site: hyd1, mgmt_ip: 10.20.1.11}
+    - {hostname: hyd1-acc-sw02, group: apac_switches, model: C9300-24T, ansible_network_os: cisco.ios.ios, role: access-switch, site: hyd1, mgmt_ip: 10.20.1.12}
+    - {hostname: sin1-core-sw01, group: apac_switches, model: N9K-C93180YC, ansible_network_os: cisco.nxos.nxos, role: core-switch, site: sin1, mgmt_ip: 10.20.2.1}
+    - {hostname: lon1-acc-sw01, group: emea_switches, model: C9200L-48P, ansible_network_os: cisco.ios.ios, role: access-switch, site: lon1, mgmt_ip: 10.30.1.11}
+    - {hostname: dub1-core-sw01, group: emea_switches, model: N9K-C93180YC, ansible_network_os: cisco.nxos.nxos, role: core-switch, site: dub1, mgmt_ip: 10.30.2.1}
+
+tasks:
+  - id: register_devices
+    type: io.kestra.plugin.core.flow.Loop
+    values: "{{ vars.devices }}"
+    tasks:
+      - id: register_device
+        type: io.kestra.plugin.core.log.Log
+        message: "{{ fromJson(item.value).hostname }} -> group {{ fromJson(item.value).group }}"
+        assets:
+          outputs:
+            - id: "{{ fromJson(item.value).hostname }}"
+              type: io.kestra.plugin.ee.assets.NetworkDevice
+              namespace: "{{ flow.namespace }}"
+              displayName: "{{ fromJson(item.value).hostname }}"
+              description: "Cisco {{ fromJson(item.value).model }} at {{ fromJson(item.value).site }}"
+              metadata:
+                group: "{{ fromJson(item.value).group }}"
+                model: "{{ fromJson(item.value).model }}"
+                ansible_network_os: "{{ fromJson(item.value).ansible_network_os }}"
+                role: "{{ fromJson(item.value).role }}"
+                site: "{{ fromJson(item.value).site }}"
+                mgmt_ip: "{{ fromJson(item.value).mgmt_ip }}"

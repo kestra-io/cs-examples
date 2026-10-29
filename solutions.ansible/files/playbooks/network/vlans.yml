@@ -1,5 +1,5 @@
 ---
-# Step 3: access VLANs. Only access switches get them; core switches are skipped.
+# Access VLANs. Only access switches get them; core switches are skipped.
 - name: Configure access VLANs
   hosts: all
   gather_facts: false

@@ -1,6 +1,6 @@
 ---
-# Step 1: read-only. Confirms every targeted switch answers and records the
-# software it runs before anything is changed.
+# Read-only. Confirms every targeted switch answers and records the software
+# it runs. Safe to run at any time.
 - name: Pre-check switches
   hosts: all
   gather_facts: false
@@ -14,18 +14,8 @@
     - name: Record the running version
       ansible.builtin.set_fact:
         running_version: >-
-          {{ os_version if (kestra_simulate | bool)
+          {{ 'lab mode' if (kestra_simulate | bool)
              else (show_version.stdout | regex_search('(?:NXOS: version|, Version)\s+([^\s,]+)', '\1') | first) }}
-
-    # Lab mode only: fail the first attempt so the Kestra retry is visible.
-    - name: Simulate a transient SSH timeout
-      ansible.builtin.fail:
-        msg: "Simulated SSH timeout on attempt {{ kestra_attempt }}, Kestra will retry"
-      when:
-        - kestra_simulate | bool
-        - simulate_transient_failure | default(false) | bool
-        - kestra_attempt | default(0) | int == 0
-      run_once: true
 
     - name: Publish the pre-check results to Kestra
       kestra:
