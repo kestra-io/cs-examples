@@ -1,0 +1,20 @@
+# Loaded for every host because it sits next to the playbooks.
+#
+# Credentials come from environment variables that the Kestra task sets from
+# Kestra secrets, so nothing sensitive lives in this repository.
+ansible_user: "{{ lookup('ansible.builtin.env', 'NET_USERNAME') }}"
+ansible_password: "{{ lookup('ansible.builtin.env', 'NET_PASSWORD') }}"
+
+# Kestra passes `-e kestra_simulate=true` in lab mode. The playbooks then skip
+# every task that talks to a device and use the inventory data instead, so the
+# whole workflow runs without real switches.
+kestra_simulate: false
+
+ntp_servers:
+  - 10.255.0.1
+  - 10.255.0.2
+syslog_hosts:
+  - 10.255.1.10
+
+# Overridden per run by the Kestra `vlans` input.
+vlans: []

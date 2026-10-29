@@ -1,0 +1,110 @@
+id: ansible_netbox_device_sync
+namespace: solutions.ansible
+description: |
+  # NetBox → Kestra Assets
+
+  Registers every switch Ansible manages as a `NetworkDevice` asset. Assets are
+  what the rollout flow targets: `ansible_build_inventory` queries them by
+  region, role and platform and turns the match into an Ansible inventory, so
+  nobody writes an inventory file by hand.
+
+  Two sources:
+  - **SAMPLE** (default): eight Cisco IOS and NX-OS switches across AMER, APAC
+    and EMEA. Use it on an instance with no NetBox.
+  - **NETBOX**: reads devices with the NetBox plugin. Needs the `NETBOX_URL` and
+    `NETBOX_API_TOKEN` secrets. Region comes from the `region` custom field and
+    software version from `os_version`; adjust the mapping in `devices` to your
+    NetBox data model.
+
+  Re-running is safe: assets are keyed on hostname and their metadata is merged
+  in place.
+
+labels:
+  demo: ansible-network-automation
+
+inputs:
+  - id: source
+    type: SELECT
+    values:
+      - SAMPLE
+      - NETBOX
+    defaults: SAMPLE
+
+variables:
+  sample_devices:
+    - {hostname: sfo1-acc-sw01, vendor: Cisco, model: C9300-48P, platform: ios, ansible_network_os: cisco.ios.ios, role: access-switch, region: amer, site: sfo1, mgmt_ip: 10.10.1.11, os_version: 17.9.4, netbox_id: 101}
+    - {hostname: sfo1-acc-sw02, vendor: Cisco, model: C9300-48P, platform: ios, ansible_network_os: cisco.ios.ios, role: access-switch, region: amer, site: sfo1, mgmt_ip: 10.10.1.12, os_version: 17.6.5, netbox_id: 102}
+    - {hostname: iad1-core-sw01, vendor: Cisco, model: N9K-C93180YC, platform: nxos, ansible_network_os: cisco.nxos.nxos, role: core-switch, region: amer, site: iad1, mgmt_ip: 10.10.2.1, os_version: 10.3(4a), netbox_id: 103}
+    - {hostname: hyd1-acc-sw01, vendor: Cisco, model: C9300-24T, platform: ios, ansible_network_os: cisco.ios.ios, role: access-switch, region: apac, site: hyd1, mgmt_ip: 10.20.1.11, os_version: 17.9.4, netbox_id: 201}
+    - {hostname: hyd1-acc-sw02, vendor: Cisco, model: C9300-24T, platform: ios, ansible_network_os: cisco.ios.ios, role: access-switch, region: apac, site: hyd1, mgmt_ip: 10.20.1.12, os_version: 17.9.4, netbox_id: 202}
+    - {hostname: sin1-core-sw01, vendor: Cisco, model: N9K-C93180YC, platform: nxos, ansible_network_os: cisco.nxos.nxos, role: core-switch, region: apac, site: sin1, mgmt_ip: 10.20.2.1, os_version: 10.2(6), netbox_id: 203}
+    - {hostname: lon1-acc-sw01, vendor: Cisco, model: C9200L-48P, platform: ios, ansible_network_os: cisco.ios.ios, role: access-switch, region: emea, site: lon1, mgmt_ip: 10.30.1.11, os_version: 17.6.5, netbox_id: 301}
+    - {hostname: dub1-core-sw01, vendor: Cisco, model: N9K-C93180YC, platform: nxos, ansible_network_os: cisco.nxos.nxos, role: core-switch, region: emea, site: dub1, mgmt_ip: 10.30.2.1, os_version: 10.3(4a), netbox_id: 302}
+
+tasks:
+  - id: netbox_devices
+    type: io.kestra.plugin.ee.netbox.device.List
+    runIf: "{{ inputs.source == 'NETBOX' }}"
+    url: "{{ secret('NETBOX_URL') }}"
+    token: "{{ secret('NETBOX_API_TOKEN') }}"
+    filters:
+      status: active
+      manufacturer: cisco
+    fields:
+      - id
+      - name
+      - device_type
+      - platform
+      - role
+      - site
+      - primary_ip4
+      - custom_fields
+    fetchType: FETCH
+
+  - id: devices
+    type: io.kestra.plugin.core.output.OutputValues
+    description: Normalises both sources to the same shape.
+    values:
+      list: >-
+        {{ inputs.source == 'NETBOX'
+           ? (outputs.netbox_devices.rows | jq('[ .[] | {
+               hostname: .name,
+               vendor: .device_type.manufacturer.name,
+               model: .device_type.model,
+               platform: (if ((.platform.slug // "") | test("nx")) then "nxos" else "ios" end),
+               ansible_network_os: (if ((.platform.slug // "") | test("nx")) then "cisco.nxos.nxos" else "cisco.ios.ios" end),
+               role: .role.slug,
+               region: (.custom_fields.region // "unknown"),
+               site: .site.slug,
+               mgmt_ip: ((.primary_ip4.address // "") | split("/") | .[0]),
+               os_version: (.custom_fields.os_version // "unknown"),
+               netbox_id: .id } ]') | first | toJson)
+           : (vars.sample_devices | toJson) }}
+
+  - id: register_devices
+    type: io.kestra.plugin.core.flow.Loop
+    values: "{{ fromJson(outputs.devices.values.list) }}"
+    tasks:
+      - id: register_device
+        type: io.kestra.plugin.core.log.Log
+        message: "{{ fromJson(item.value).hostname }} <- {{ fromJson(item.value).model }} {{ fromJson(item.value).platform }} {{ fromJson(item.value).os_version }} @ {{ fromJson(item.value).site }} ({{ fromJson(item.value).region }})"
+        assets:
+          outputs:
+            - id: "{{ fromJson(item.value).hostname }}"
+              type: io.kestra.plugin.ee.assets.NetworkDevice
+              namespace: "{{ flow.namespace }}"
+              displayName: "{{ fromJson(item.value).hostname }}"
+              description: "{{ fromJson(item.value).vendor }} {{ fromJson(item.value).model }} at {{ fromJson(item.value).site }}"
+              metadata:
+                vendor: "{{ fromJson(item.value).vendor }}"
+                model: "{{ fromJson(item.value).model }}"
+                platform: "{{ fromJson(item.value).platform }}"
+                ansible_network_os: "{{ fromJson(item.value).ansible_network_os }}"
+                role: "{{ fromJson(item.value).role }}"
+                region: "{{ fromJson(item.value).region }}"
+                site: "{{ fromJson(item.value).site }}"
+                mgmt_ip: "{{ fromJson(item.value).mgmt_ip }}"
+                os_version: "{{ fromJson(item.value).os_version }}"
+                netbox_id: "{{ fromJson(item.value).netbox_id }}"
+                managed_by: ansible
+                last_synced: "{{ execution.startDate }}"

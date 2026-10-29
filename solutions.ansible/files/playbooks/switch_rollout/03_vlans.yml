@@ -1,0 +1,31 @@
+---
+# Step 3: access VLANs. Only access switches get them; core switches are skipped.
+- name: Configure access VLANs
+  hosts: all
+  gather_facts: false
+  tasks:
+    - name: Merge VLANs (IOS)
+      cisco.ios.ios_vlans:
+        config: "{{ vlans }}"
+        state: merged
+      when:
+        - not (kestra_simulate | bool)
+        - role == 'access-switch'
+        - ansible_network_os == 'cisco.ios.ios'
+
+    - name: Merge VLANs (NX-OS)
+      cisco.nxos.nxos_vlans:
+        config: "{{ vlans }}"
+        state: merged
+      when:
+        - not (kestra_simulate | bool)
+        - role == 'access-switch'
+        - ansible_network_os == 'cisco.nxos.nxos'
+
+    - name: Show the VLANs that would be merged (lab mode)
+      ansible.builtin.debug:
+        msg: "{{ inventory_hostname }} <- {{ vlans | map(attribute='vlan_id') | list }}"
+      changed_when: true
+      when:
+        - kestra_simulate | bool
+        - role == 'access-switch'

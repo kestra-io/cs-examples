@@ -1,0 +1,35 @@
+---
+# Step 1: read-only. Confirms every targeted switch answers and records the
+# software it runs before anything is changed.
+- name: Pre-check switches
+  hosts: all
+  gather_facts: false
+  tasks:
+    - name: Read the software version from the device
+      ansible.netcommon.cli_command:
+        command: show version
+      register: show_version
+      when: not (kestra_simulate | bool)
+
+    - name: Record the running version
+      ansible.builtin.set_fact:
+        running_version: >-
+          {{ os_version if (kestra_simulate | bool)
+             else (show_version.stdout | regex_search('(?:NXOS: version|, Version)\s+([^\s,]+)', '\1') | first) }}
+
+    # Lab mode only: fail the first attempt so the Kestra retry is visible.
+    - name: Simulate a transient SSH timeout
+      ansible.builtin.fail:
+        msg: "Simulated SSH timeout on attempt {{ kestra_attempt }}, Kestra will retry"
+      when:
+        - kestra_simulate | bool
+        - simulate_transient_failure | default(false) | bool
+        - kestra_attempt | default(0) | int == 0
+      run_once: true
+
+    - name: Publish the pre-check results to Kestra
+      kestra:
+        outputs:
+          running_versions: "{{ dict(ansible_play_hosts | zip(ansible_play_hosts | map('extract', hostvars, 'running_version'))) }}"
+      run_once: true
+      delegate_to: localhost
