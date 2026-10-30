@@ -1,0 +1,206 @@
+id: ansible_run_playbook
+namespace: solutions.assets
+description: |
+  # Run an Ansible playbook against a group of switches
+
+  1. **Inventory**: built from the `NetworkDevice` assets in this namespace.
+     Each asset's `group` metadata becomes an Ansible inventory group.
+  2. **Playbook**: downloads the playbooks from Git at `git_ref` and runs `playbook`
+     with `--limit <group>`. A change merged to a playbook reaches the next
+     run without editing this flow. Failed runs are retried up to 3 times.
+  3. **Asset write-back**: every switch the playbook ran on gets its result
+     on its asset (`last_playbook`, `last_playbook_status`, ...). A playbook
+     can also publish `asset_metadata` with the `kestra` module, for example
+     `precheck.yml` writes `os_version`, and those keys are written too.
+     Failed and unreachable switches are recorded before the execution fails.
+
+  **Lab mode** (`simulate: true`, the default) runs the playbook with
+  `ansible_connection=local`, and each task that would talk to a device logs
+  what it would push instead. No switches or credentials are needed.
+
+  **Demo:** run `ansible_register_devices` once, then run this flow. Try
+  `group: apac_switches` with `playbook: vlans.yml`, then turn on `check_mode`.
+
+labels:
+  demo: ansible-network-automation
+
+inputs:
+  - id: group
+    type: SELECT
+    description: Inventory group to target, from the `group` metadata of the assets.
+    expression: "{{ assets(type='io.kestra.plugin.ee.assets.NetworkDevice', namespace='solutions.assets') | jq('[\"all\"] + ([ .[].metadata.group ] | unique)') | first }}"
+    defaults: all
+  - id: playbook
+    type: SELECT
+    values:
+      - precheck.yml
+      - base_config.yml
+      - vlans.yml
+    defaults: precheck.yml
+  - id: check_mode
+    type: BOOL
+    description: Run in Ansible check mode and show the diff. Nothing is pushed.
+    defaults: false
+  - id: simulate
+    type: BOOL
+    description: Lab mode. Runs the playbook without connecting to a device.
+    defaults: true
+  - id: git_ref
+    type: STRING
+    description: Branch of the playbook repository to run.
+    defaults: main
+
+variables:
+  git_url: https://github.com/kestra-io/cs-examples
+  playbook_dir: solutions.assets/files/playbooks/network
+  # The Process runner uses Ansible from this virtualenv on the worker, and
+  # creates it on first use. The `ansible` package bundles the cisco.ios,
+  # cisco.nxos and ansible.netcommon collections.
+  ansible_venv: /tmp/kestra-ansible-venv
+
+tasks:
+  - id: inventory
+    type: io.kestra.plugin.core.output.OutputValues
+    description: One inventory group per distinct `group` value, one host per asset.
+    values:
+      inventory: >-
+        {{ assets(type='io.kestra.plugin.ee.assets.NetworkDevice', namespace=flow.namespace)
+           | jq('[ group_by(.metadata.group)[] | {
+                 key: .[0].metadata.group,
+                 value: {
+                   hosts: (map({
+                     key: .id,
+                     value: {
+                       ansible_host: .metadata.mgmt_ip,
+                       ansible_network_os: .metadata.ansible_network_os,
+                       ansible_connection: "ansible.netcommon.network_cli",
+                       role: .metadata.role,
+                       site: .metadata.site
+                     }
+                   }) | from_entries)
+                 }
+               } ] | from_entries | { all: { children: . } }')
+           | first | toJson }}
+
+  - id: no_devices
+    type: io.kestra.plugin.core.execution.Fail
+    runIf: "{{ fromJson(outputs.inventory.values.inventory).all.children | length == 0 }}"
+    errorMessage: "No NetworkDevice assets in {{ flow.namespace }}. Run ansible_register_devices first."
+
+  - id: playbook
+    type: io.kestra.plugin.ansible.cli.AnsibleCLI
+    # Lets the asset write-back record failed and unreachable switches;
+    # `failed_hosts` fails the execution afterwards.
+    allowFailure: true
+    taskRunner:
+      type: io.kestra.plugin.core.runner.Process
+    # To run in a container instead, replace taskRunner and the venv lines of
+    # beforeCommands with:
+    # taskRunner:
+    #   type: io.kestra.plugin.scripts.runner.docker.Docker
+    # containerImage: cytopia/ansible:latest-tools
+    inputFiles:
+      inventory.yml: "{{ outputs.inventory.values.inventory }}"
+    beforeCommands:
+      - >-
+        [ -x {{ vars.ansible_venv }}/bin/ansible-playbook ]
+        || (uv venv -q {{ vars.ansible_venv }} && uv pip install -q --python {{ vars.ansible_venv }} ansible ansible-pylibssh)
+      - export PATH={{ vars.ansible_venv }}/bin:$PATH
+      # Fetches the playbooks at git_ref on every attempt. For a private repo, add
+      # -H "Authorization: Bearer {{ secret('GITHUB_TOKEN') }}" to curl.
+      - >-
+        mkdir -p repo && curl -fsSL {{ vars.git_url }}/archive/{{ inputs.git_ref }}.tar.gz
+        | tar xz --strip-components=1 -C repo --wildcards '*/{{ vars.playbook_dir }}/*'
+    checkMode: "{{ inputs.check_mode }}"
+    diff: true
+    streamLogs: true
+    limit: "{{ inputs.group }}"
+    env:
+      NET_USERNAME: "{{ inputs.simulate ? 'lab' : secret('NETWORK_SSH_USERNAME') }}"
+      NET_PASSWORD: "{{ inputs.simulate ? 'lab' : secret('NETWORK_SSH_PASSWORD') }}"
+    retry:
+      type: constant
+      interval: PT15S
+      maxAttempts: 3
+    commands:
+      - >-
+        ansible-playbook -i inventory.yml repo/{{ vars.playbook_dir }}/{{ inputs.playbook }}
+        {{ inputs.simulate ? '-e ansible_connection=local -e kestra_simulate=true' : '' }}
+
+  - id: results
+    type: io.kestra.plugin.core.output.OutputValues
+    description: Per-switch outcome, and the asset metadata the playbook published.
+    values:
+      hosts: >-
+        {{ (outputs.playbook.playbooks ?? []) | jq('[ .[].plays[].tasks[].hosts[] ] | group_by(.host) | map({
+             host: .[0].host,
+             status: (if any(.status == "unreachable") then "unreachable"
+                      elif any(.status == "failed") then "failed"
+                      elif any(.result.changed == true) then "changed"
+                      else "ok" end),
+             changed_tasks: ([ .[] | select(.result.changed == true) ] | length)
+           })') | first | toJson }}
+      metadata: >-
+        {{ (outputs.playbook.vars.outputs ?? {}) | jq('[ (.asset_metadata // {}) | to_entries[]
+             | .key as $host | .value | to_entries[]
+             | { host: $host, key: .key, value: (.value | if type == "array" then map(tostring) | join(",") else tostring end) } ]')
+           | first | toJson }}
+
+  - id: stamp_results
+    type: io.kestra.plugin.core.flow.Loop
+    runIf: "{{ fromJson(outputs.results.values.hosts) | length > 0 }}"
+    description: One iteration per switch. Only the keys listed here change; the rest of the asset's metadata is kept.
+    values: "{{ fromJson(outputs.results.values.hosts) }}"
+    tasks:
+      - id: stamp_result
+        type: io.kestra.plugin.core.log.Log
+        message: "{{ fromJson(item.value).host }}: {{ fromJson(item.value).status }} ({{ fromJson(item.value).changed_tasks }} changed)"
+        assets:
+          outputs:
+            - id: "{{ fromJson(item.value).host }}"
+              type: io.kestra.plugin.ee.assets.NetworkDevice
+              namespace: "{{ flow.namespace }}"
+              metadata:
+                last_playbook: "{{ inputs.playbook }}"
+                last_playbook_status: "{{ fromJson(item.value).status }}"
+                last_playbook_changed_tasks: "{{ fromJson(item.value).changed_tasks }}"
+                last_playbook_mode: "{{ inputs.check_mode ? 'check' : 'apply' }}{{ inputs.simulate ? ' (lab)' : '' }}"
+                last_playbook_git_ref: "{{ inputs.git_ref }}"
+                last_playbook_run: "{{ execution.startDate }}"
+                last_playbook_execution: "{{ execution.id }}"
+
+  - id: stamp_metadata
+    type: io.kestra.plugin.core.flow.Loop
+    runIf: "{{ fromJson(outputs.results.values.metadata) | length > 0 }}"
+    description: One iteration per key the playbook published, run one at a time so two keys of one asset never race.
+    values: "{{ fromJson(outputs.results.values.metadata) }}"
+    concurrencyLimit: 1
+    tasks:
+      - id: stamp_key
+        type: io.kestra.plugin.core.log.Log
+        message: "{{ fromJson(item.value).host }}: {{ fromJson(item.value).key }} = {{ fromJson(item.value).value }}"
+        assets:
+          outputs:
+            - id: "{{ fromJson(item.value).host }}"
+              type: io.kestra.plugin.ee.assets.NetworkDevice
+              namespace: "{{ flow.namespace }}"
+              metadata:
+                "{{ fromJson(item.value).key }}": "{{ fromJson(item.value).value }}"
+
+  - id: failed_hosts
+    type: io.kestra.plugin.core.execution.Fail
+    runIf: "{{ (outputs.playbook.exitCode ?? 1) != 0 }}"
+    errorMessage: >-
+      {%- set failed = fromJson(outputs.results.values.hosts) | jq('[ .[] | select(.status == "failed" or .status == "unreachable") | .host + " (" + .status + ")" ] | join(", ")') | first -%}
+      {{ inputs.playbook }} failed (exit code {{ outputs.playbook.exitCode ?? 'unknown' }})
+      {{ failed is empty ? 'before reaching any switch. See the playbook task logs.' : 'on ' ~ failed ~ '. The result is recorded on each switch asset.' }}
+
+outputs:
+  - id: hosts
+    type: JSON
+    description: Per-switch status and changed-task count.
+    value: "{{ outputs.results.values.hosts ?? '[]' }}"
+  - id: asset_metadata
+    type: JSON
+    description: Asset metadata keys the playbook published, one entry per switch and key.
+    value: "{{ outputs.results.values.metadata ?? '[]' }}"

@@ -1,0 +1,44 @@
+---
+# Access VLANs. Only access switches get them; core switches are skipped.
+- name: Configure access VLANs
+  hosts: all
+  gather_facts: false
+  tasks:
+    - name: Merge VLANs (IOS)
+      cisco.ios.ios_vlans:
+        config: "{{ vlans }}"
+        state: merged
+      when:
+        - not (kestra_simulate | bool)
+        - role == 'access-switch'
+        - ansible_network_os == 'cisco.ios.ios'
+
+    - name: Merge VLANs (NX-OS)
+      cisco.nxos.nxos_vlans:
+        config: "{{ vlans }}"
+        state: merged
+      when:
+        - not (kestra_simulate | bool)
+        - role == 'access-switch'
+        - ansible_network_os == 'cisco.nxos.nxos'
+
+    - name: Show the VLANs that would be merged (lab mode)
+      ansible.builtin.debug:
+        msg: "{{ inventory_hostname }} <- {{ vlans | map(attribute='vlan_id') | list }}"
+      changed_when: true
+      when:
+        - kestra_simulate | bool
+        - role == 'access-switch'
+
+    - name: Record what was applied
+      ansible.builtin.set_fact:
+        asset_facts: "{{ {'vlans': vlans | map(attribute='vlan_id') | join(',')} if role == 'access-switch' else {} }}"
+
+    # Skipped in check mode, so a dry run never records config it did not push.
+    - name: Publish asset metadata to Kestra
+      kestra:
+        outputs:
+          asset_metadata: "{{ dict(ansible_play_hosts | zip(ansible_play_hosts | map('extract', hostvars, 'asset_facts'))) }}"
+      run_once: true
+      delegate_to: localhost
+      when: not ansible_check_mode
