@@ -1,0 +1,68 @@
+id: k4i-renew-certificate
+namespace: solutions.kestra4infra
+type: io.kestra.plugin.ee.apps.Execution
+flowId: renew_certificate
+
+displayName: Renew a TLS certificate
+description: "Re-issues the certificate, pushes it to its application and checks the application still answers."
+tags:
+  - kestra4infra
+  - day-2
+  - security
+
+access:
+  type: PRIVATE
+  catalog: true
+
+layout:
+  - on: OPEN
+    blocks:
+      - type: io.kestra.plugin.ee.apps.core.blocks.Markdown
+        content: |
+          ## Renew a TLS certificate
+
+          Re-issues the certificate, pushes it to its application and checks the application still answers.
+
+          Also runs on its own 15 days before expiry (`cert_expiry_autorenew`).
+
+      - type: io.kestra.plugin.ee.apps.execution.blocks.CreateExecutionForm
+
+      - type: io.kestra.plugin.ee.apps.execution.blocks.CreateExecutionButton
+        text: Renew
+        style: INFO
+
+  - on: RUNNING
+    blocks:
+      - type: io.kestra.plugin.ee.apps.core.blocks.Markdown
+        content: |
+          ## Renewing:
+
+      - type: io.kestra.plugin.ee.apps.execution.blocks.Gantt
+
+  - on: SUCCESS
+    blocks:
+      - type: io.kestra.plugin.ee.apps.core.blocks.Markdown
+        content: |
+          ## Done
+
+      - type: io.kestra.plugin.ee.apps.execution.blocks.Logs
+        filter:
+          taskIds:
+            - issue_certificate
+            - record_certificate
+      - type: io.kestra.plugin.ee.apps.execution.blocks.Assets
+        filter:
+          include:
+            - kestra4infra.Certificate
+
+  - on: FAILURE
+    blocks:
+      - type: io.kestra.plugin.ee.apps.core.blocks.Markdown
+        content: |
+          ## Renew a TLS certificate: failed
+
+      - type: io.kestra.plugin.ee.apps.core.blocks.Stacktrace
+
+      - type: io.kestra.plugin.ee.apps.execution.blocks.Logs
+        filter:
+          logLevel: ERROR

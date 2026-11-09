@@ -1,0 +1,56 @@
+id: reapply_configuration
+namespace: solutions.kestra4infra
+
+labels:
+  kestra4infra: "true"
+  lifecycle: day-2
+
+description: |
+  Run the CIS baseline playbook on a server again, to correct drift.
+
+  Offered on every active VM. **Simulated**: the playbook call is in a comment. The run is recorded
+  as the baseline feeding the VM, so the VM stays in the baseline's blast radius.
+
+inputs:
+  - id: vm
+    type: SELECT
+    displayName: Server
+    required: false
+    autoSelectFirst: true
+    expression: >-
+      {{ assets(namespace='solutions.kestra4infra', type='io.kestra.plugin.ee.assets.VM')
+      | jq('[ .[] | select(.status == "active") | .id ] | sort_by(. != "' ~ (labels.assetId ??? '') ~ '")')
+      | first }}
+
+  - id: check_only
+    type: BOOL
+    displayName: Check mode (report drift, change nothing)
+    defaults: false
+
+variables:
+  target: "{{ labels.system.assetId ??? inputs.vm ?? '' }}"
+
+tasks:
+  - id: no_target
+    type: io.kestra.plugin.core.execution.Fail
+    condition: "{{ render(vars.target) is empty }}"
+    errorMessage: Run this from a server's action button, or pick one from the list.
+
+  - id: playbook
+    type: io.kestra.plugin.core.log.Log
+    message: "ansible-playbook playbooks/cis_rhel9.yml --limit {{ render(vars.target) }}{{ inputs.check_only ? ' --check --diff' : '' }} (simulated): 0 changed."
+    assets:
+      inputs:
+        - id: k4i-cis-baseline
+      outputs:
+        - type: io.kestra.plugin.ee.assets.VM
+          id: "{{ render(vars.target) }}"
+          namespace: solutions.kestra4infra
+          metadata:
+            config_baseline: CIS RHEL 9 L1 v2.4.1
+            config_drift: none
+            config_checked_at: "{{ now(format='iso_milli', timeZone='UTC') }}"
+  # - id: playbook
+  #   type: io.kestra.plugin.ansible.cli.AnsibleCLI
+  #   commands:
+  #     - ansible-playbook playbooks/cis_rhel9.yml --limit {{ render(vars.target) }}

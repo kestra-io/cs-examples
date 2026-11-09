@@ -1,0 +1,39 @@
+id: on_vm_created
+namespace: solutions.kestra4infra
+
+labels:
+  kestra4infra: "true"
+  lifecycle: trigger
+
+description: |
+  Asset event trigger: every new server is enrolled in the CMDB, monitoring and backup.
+
+  Provisioning does not call this flow and does not know it exists. The `EventTrigger` reacts to a
+  VM asset being created, whoever created it, so a team adds an enrolment step without touching the
+  provisioning flow.
+
+  **Simulated**: the CMDB id and the enrolment are recorded on the VM, no tool is called.
+
+triggers:
+  - id: vm_created
+    type: io.kestra.plugin.ee.assets.EventTrigger
+    namespace: solutions.kestra4infra
+    assetType: io.kestra.plugin.ee.assets.VM
+    events:
+      - CREATED
+
+tasks:
+  - id: enrol
+    type: io.kestra.plugin.core.log.Log
+    message: |
+      New server {{ trigger.asset.id }}: creating its CI in ServiceNow, adding it to Prometheus
+      and to the backup policy (simulated).
+    assets:
+      outputs:
+        - type: io.kestra.plugin.ee.assets.VM
+          id: "{{ trigger.asset.id }}"
+          namespace: solutions.kestra4infra
+          metadata:
+            cmdb_ci: "CI{{ execution.id | slice(0, 8) | upper }}"
+            monitoring: enrolled
+            enrolled_at: "{{ now(format='iso_milli', timeZone='UTC') }}"

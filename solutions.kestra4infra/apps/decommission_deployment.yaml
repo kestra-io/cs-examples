@@ -1,0 +1,58 @@
+id: k4i-decommission-deployment
+namespace: solutions.kestra4infra
+type: io.kestra.plugin.ee.apps.Execution
+flowId: decommission_deployment
+
+displayName: Decommission a deployment
+description: "Removes every resource of the deployment, last built first: health check, certificate, DNS, application,"
+tags:
+  - kestra4infra
+  - retirement
+
+access:
+  type: PRIVATE
+  catalog: true
+
+layout:
+  - on: OPEN
+    blocks:
+      - type: io.kestra.plugin.ee.apps.core.blocks.Markdown
+        content: |
+          ## Decommission a deployment
+
+          Removes every resource of the deployment, last built first: health check, certificate, DNS, application,
+          servers, account, firewall rule, security group, VLAN. Shared infrastructure is left alone.
+
+      - type: io.kestra.plugin.ee.apps.execution.blocks.CreateExecutionForm
+
+      - type: io.kestra.plugin.ee.apps.execution.blocks.CreateExecutionButton
+        text: Decommission
+        style: INFO
+
+  - on: RUNNING
+    blocks:
+      - type: io.kestra.plugin.ee.apps.core.blocks.Markdown
+        content: |
+          ## Tearing down in reverse dependency order:
+
+      - type: io.kestra.plugin.ee.apps.execution.blocks.Gantt
+
+  - on: SUCCESS
+    blocks:
+      - type: io.kestra.plugin.ee.apps.core.blocks.Markdown
+        content: |
+          ## Done
+
+      - type: io.kestra.plugin.ee.apps.execution.blocks.Assets
+
+  - on: FAILURE
+    blocks:
+      - type: io.kestra.plugin.ee.apps.core.blocks.Markdown
+        content: |
+          ## Decommission a deployment: failed
+
+      - type: io.kestra.plugin.ee.apps.core.blocks.Stacktrace
+
+      - type: io.kestra.plugin.ee.apps.execution.blocks.Logs
+        filter:
+          logLevel: ERROR

@@ -1,0 +1,58 @@
+id: k4i-setup-shared-infra
+namespace: solutions.kestra4infra
+type: io.kestra.plugin.ee.apps.Execution
+flowId: setup_shared_infra
+
+displayName: Register the shared infrastructure
+description: "Records the core switch, edge firewall, DNS zone, AD domain, issuing CA and CIS baseline every deployment"
+tags:
+  - kestra4infra
+  - admin
+
+access:
+  type: PRIVATE
+  catalog: true
+
+layout:
+  - on: OPEN
+    blocks:
+      - type: io.kestra.plugin.ee.apps.core.blocks.Markdown
+        content: |
+          ## Register the shared infrastructure
+
+          Records the core switch, edge firewall, DNS zone, AD domain, issuing CA and CIS baseline every deployment
+          builds on. Run once before the first deployment; running it again is safe.
+
+      - type: io.kestra.plugin.ee.apps.execution.blocks.CreateExecutionForm
+
+      - type: io.kestra.plugin.ee.apps.execution.blocks.CreateExecutionButton
+        text: Register
+        style: INFO
+
+  - on: RUNNING
+    blocks:
+      - type: io.kestra.plugin.ee.apps.core.blocks.Markdown
+        content: |
+          ## Registering:
+
+      - type: io.kestra.plugin.ee.apps.execution.blocks.Gantt
+
+  - on: SUCCESS
+    blocks:
+      - type: io.kestra.plugin.ee.apps.core.blocks.Markdown
+        content: |
+          ## Done
+
+      - type: io.kestra.plugin.ee.apps.execution.blocks.Assets
+
+  - on: FAILURE
+    blocks:
+      - type: io.kestra.plugin.ee.apps.core.blocks.Markdown
+        content: |
+          ## Register the shared infrastructure: failed
+
+      - type: io.kestra.plugin.ee.apps.core.blocks.Stacktrace
+
+      - type: io.kestra.plugin.ee.apps.execution.blocks.Logs
+        filter:
+          logLevel: ERROR

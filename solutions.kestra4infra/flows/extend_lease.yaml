@@ -1,0 +1,67 @@
+id: extend_lease
+namespace: solutions.kestra4infra
+
+labels:
+  kestra4infra: "true"
+  lifecycle: day-2
+
+description: |
+  Push a deployment's lease (its TTL) further, and lift an overdue flag.
+
+  Offered on active deployments. The service account's own expiry is extended with it, since the
+  account ends with the deployment.
+
+inputs:
+  - id: deployment
+    type: SELECT
+    displayName: Deployment
+    required: false
+    autoSelectFirst: true
+    expression: >-
+      {{ assets(namespace='solutions.kestra4infra', type='io.kestra.plugin.ee.assets.Deployment')
+      | jq('[ .[] | select(.status == "active") | .id ] | sort_by(. != "' ~ (labels.assetId ??? '') ~ '")')
+      | first }}
+
+  - id: days
+    type: SELECT
+    displayName: Extend by
+    values: ["30", "90", "180"]
+    defaults: "90"
+
+variables:
+  target: "{{ labels.system.assetId ??? inputs.deployment ?? '' }}"
+
+tasks:
+  - id: no_target
+    type: io.kestra.plugin.core.execution.Fail
+    condition: "{{ render(vars.target) is empty }}"
+    errorMessage: Run this from a deployment's action button, or pick one from the list.
+
+  - id: lease
+    type: io.kestra.plugin.core.output.OutputValues
+    values:
+      until: "{{ now() | dateAdd(amount=inputs.days | number, unit='DAYS', format='iso_milli', timeZone='UTC') }}"
+
+  - id: extend
+    type: io.kestra.plugin.core.log.Log
+    message: "{{ render(vars.target) }} now runs until {{ outputs.lease.values.until }}."
+    assets:
+      outputs:
+        - type: io.kestra.plugin.ee.assets.Deployment
+          id: "{{ render(vars.target) }}"
+          namespace: solutions.kestra4infra
+          ttl: "{{ outputs.lease.values.until }}"
+          metadata:
+            lease_alert: null
+            lease_extended_at: "{{ now(format='iso_milli', timeZone='UTC') }}"
+
+  - id: extend_account
+    type: io.kestra.plugin.core.log.Log
+    message: "svc-{{ render(vars.target) }} account expiry follows the lease (simulated: Set-ADAccountExpiration)."
+    assets:
+      outputs:
+        - type: kestra4infra.ServiceAccount
+          id: "{{ render(vars.target) }}-svc"
+          namespace: solutions.kestra4infra
+          metadata:
+            account_expires_at: "{{ outputs.lease.values.until }}"

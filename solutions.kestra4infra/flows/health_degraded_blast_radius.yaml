@@ -1,0 +1,47 @@
+id: health_degraded_blast_radius
+namespace: solutions.kestra4infra
+
+labels:
+  kestra4infra: "true"
+  lifecycle: trigger
+
+description: |
+  Asset event trigger: a health check turning `degraded` opens an incident with its blast radius.
+
+  The trigger reacts to the health check's metadata. The flow walks the dependencies of the
+  application behind it, upstream for suspects (servers, certificate, account, VLAN, shared
+  switch) and downstream for impact, and lists the teams to page.
+
+  Run `run_health_check` with `outcome: degraded` to see it.
+
+triggers:
+  - id: degraded
+    type: io.kestra.plugin.ee.assets.EventTrigger
+    namespace: solutions.kestra4infra
+    assetType: kestra4infra.HealthCheck
+    events:
+      - UPDATED
+    metadataQuery:
+      - field: health
+        type: EQUAL_TO
+        value: degraded
+
+tasks:
+  - id: radius
+    type: io.kestra.plugin.core.flow.Subflow
+    namespace: solutions.kestra4infra
+    flowId: blast_radius
+    wait: true
+    transmitFailed: true
+    inputs:
+      asset: "{{ trigger.asset.id | replace({'-health': '-app'}) }}"
+
+  - id: incident
+    type: io.kestra.plugin.core.log.Log
+    message: |
+      INCIDENT {{ trigger.asset.id }} degraded ({{ trigger.asset.metadata.http_status }}, {{ trigger.asset.metadata.latency_ms }} ms).
+      Suspects, what {{ trigger.asset.id | replace({'-health': '-app'}) }} depends on: {{ outputs.radius.outputs.depends_on | jq('[.[].id]') | first | join(', ') }}
+      Deployments affected: {{ outputs.radius.outputs.deployments | join(', ') }}
+      Teams to page: {{ outputs.radius.outputs.owners | join(', ') }}
+  # - id: page
+  #   type: io.kestra.plugin.servicenow.Post        # or PagerDuty, Slack

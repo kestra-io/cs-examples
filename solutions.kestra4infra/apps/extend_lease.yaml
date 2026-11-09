@@ -1,0 +1,61 @@
+id: k4i-extend-lease
+namespace: solutions.kestra4infra
+type: io.kestra.plugin.ee.apps.Execution
+flowId: extend_lease
+
+displayName: Extend a deployment lease
+description: "Pushes the deployment's expiry further and lifts an overdue flag. The service account's expiry follows."
+tags:
+  - kestra4infra
+  - day-2
+  - governance
+
+access:
+  type: PRIVATE
+  catalog: true
+
+layout:
+  - on: OPEN
+    blocks:
+      - type: io.kestra.plugin.ee.apps.core.blocks.Markdown
+        content: |
+          ## Extend a deployment lease
+
+          Pushes the deployment's expiry further and lifts an overdue flag. The service account's expiry follows.
+
+      - type: io.kestra.plugin.ee.apps.execution.blocks.CreateExecutionForm
+
+      - type: io.kestra.plugin.ee.apps.execution.blocks.CreateExecutionButton
+        text: Extend
+        style: INFO
+
+  - on: RUNNING
+    blocks:
+      - type: io.kestra.plugin.ee.apps.core.blocks.Markdown
+        content: |
+          ## Extending:
+
+      - type: io.kestra.plugin.ee.apps.execution.blocks.Gantt
+
+  - on: SUCCESS
+    blocks:
+      - type: io.kestra.plugin.ee.apps.core.blocks.Markdown
+        content: |
+          ## Done
+
+      - type: io.kestra.plugin.ee.apps.execution.blocks.Assets
+        filter:
+          include:
+            - io.kestra.plugin.ee.assets.Deployment
+
+  - on: FAILURE
+    blocks:
+      - type: io.kestra.plugin.ee.apps.core.blocks.Markdown
+        content: |
+          ## Extend a deployment lease: failed
+
+      - type: io.kestra.plugin.ee.apps.core.blocks.Stacktrace
+
+      - type: io.kestra.plugin.ee.apps.execution.blocks.Logs
+        filter:
+          logLevel: ERROR

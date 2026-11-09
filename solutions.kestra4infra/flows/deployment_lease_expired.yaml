@@ -1,0 +1,44 @@
+id: deployment_lease_expired
+namespace: solutions.kestra4infra
+
+labels:
+  kestra4infra: "true"
+  lifecycle: trigger
+
+description: |
+  Asset lifecycle trigger: a deployment past its lease is flagged and its owner warned.
+
+  Nothing is destroyed automatically: the owner extends the lease or decommissions from the
+  deployment page. The automatic teardown is one Subflow away, left in a comment.
+
+triggers:
+  - id: expired
+    type: io.kestra.plugin.ee.assets.TtlTrigger
+    on: EXPIRED
+    namespace: solutions.kestra4infra
+    assetType: io.kestra.plugin.ee.assets.Deployment
+
+tasks:
+  - id: flag
+    type: io.kestra.plugin.core.log.Log
+    message: "{{ trigger.asset.id }} ({{ trigger.asset.owner }}) is past its lease of {{ trigger.asset.ttl }}. Extend it or decommission it."
+    assets:
+      outputs:
+        - type: io.kestra.plugin.ee.assets.Deployment
+          id: "{{ trigger.asset.id }}"
+          namespace: solutions.kestra4infra
+          metadata:
+            lease_alert: overdue
+
+  # - id: notify_owner
+  #   type: io.kestra.plugin.slack.notifications.SlackIncomingWebhook
+  #   url: "{{ secret('SLACK_WEBHOOK') }}"
+  #   payload: '{"text": "{{ trigger.asset.id }} is past its lease"}'
+  #
+  # - id: reclaim
+  #   type: io.kestra.plugin.core.flow.Subflow
+  #   namespace: solutions.kestra4infra
+  #   flowId: decommission_deployment
+  #   inputs:
+  #     deployment: "{{ trigger.asset.id }}"
+  #     reason: lease expired

@@ -1,0 +1,128 @@
+id: blast_radius
+namespace: solutions.kestra4infra
+
+labels:
+  kestra4infra: "true"
+  lifecycle: day-2
+
+description: |
+  What breaks if this asset breaks, and what it depends on.
+
+  Offered as an action on every asset. It reads the asset's dependency graph from Kestra (the same
+  graph as the asset's Dependencies tab) and walks it:
+  - **impact**: everything downstream through the lineage the provisioning tasks recorded
+    (switch > VLAN > VMs > application > certificate > health check), and for a deployment, every
+    resource it is made of;
+  - **depends on**: everything upstream, the shared infrastructure included;
+  - **deployments and owners** hit, so the report says who to call.
+
+  Try it on `k4i-core-sw-01` or `k4i-issuing-ca` once two deployments exist: shared assets cross
+  deployment boundaries. `health_degraded_blast_radius` runs it on its own when a health check
+  turns degraded.
+
+inputs:
+  - id: asset
+    type: SELECT
+    displayName: Asset
+    required: false
+    autoSelectFirst: true
+    expression: >-
+      {{ assets(namespace='solutions.kestra4infra')
+      | jq('[ .[] | select(.status != "destroyed") | .id ] | sort | sort_by(. != "' ~ (labels.assetId ??? '') ~ '")')
+      | first }}
+
+variables:
+  target: "{{ labels.system.assetId ??? inputs.asset ?? '' }}"
+
+tasks:
+  - id: no_target
+    type: io.kestra.plugin.core.execution.Fail
+    condition: "{{ render(vars.target) is empty }}"
+    errorMessage: Run this from an asset's action button, or pick an asset from the list.
+
+  - id: graph
+    type: io.kestra.plugin.core.http.Request
+    uri: "http://localhost:8080/api/v1/{{ flow.tenantId }}/assets/{{ render(vars.target) }}/dependencies?expandAll=true"
+    options:
+      auth:
+        type: BASIC
+        username: admin@localhost.dev
+        password: "{{ secret('KESTRA_API_PASSWORD') }}"
+
+  # Node ids in the graph are `<tenant>_<asset id>`. `reach` is a fixed point: add the far end of
+  # every edge leaving the set until the set stops growing.
+  - id: walk
+    type: io.kestra.plugin.core.output.OutputValues
+    values:
+      impact: >-
+        {{ outputs.graph.body | jq('
+          . as $g | "' ~ flow.tenantId ~ '_" as $p | ($p + "' ~ render(vars.target) ~ '") as $root
+          | def reach($s): ([ $g.edges[] | select(.kind == "UPSTREAM_OF") | .source as $x | select([ $s[] | select(. == $x) ] | length > 0) | .target ] + $s | unique) as $n
+              | if ($n | length) == ($s | length) then $n else reach($n) end;
+          reach([ $g.edges[] | select(.kind == "PART_OF" and .target == $root) | .source ] + [ $root ])
+          | map(select(. != $root) | ltrimstr($p))') | first }}
+      depends_on: >-
+        {{ outputs.graph.body | jq('
+          . as $g | "' ~ flow.tenantId ~ '_" as $p | ($p + "' ~ render(vars.target) ~ '") as $root
+          | def reach($s): ([ $g.edges[] | select(.kind == "UPSTREAM_OF") | .target as $x | select([ $s[] | select(. == $x) ] | length > 0) | .source ] + $s | unique) as $n
+              | if ($n | length) == ($s | length) then $n else reach($n) end;
+          reach([ $root ]) | map(select(. != $root) | ltrimstr($p))') | first }}
+
+  - id: inventory
+    type: io.kestra.plugin.core.http.Request
+    uri: "http://localhost:8080/api/v1/{{ flow.tenantId }}/assets/search?size=1000&filters[namespace][EQUALS]=solutions.kestra4infra"
+    options:
+      auth:
+        type: BASIC
+        username: admin@localhost.dev
+        password: "{{ secret('KESTRA_API_PASSWORD') }}"
+
+  - id: enrich
+    type: io.kestra.plugin.core.output.OutputValues
+    values:
+      impacted: >-
+        {{ outputs.inventory.body | jq('
+          ' ~ outputs.walk.values.impact ~ ' as $ids
+          | [ .results[] | select(.status != "destroyed") | .id as $i | select([ $ids[] | select(. == $i) ] | length > 0)
+              | { id, type: (.type | split(".") | last), owner: (.owner // ""), deployment: (.partOf.id // (if (.type | endswith("Deployment")) then .id else "" end)) } ]
+          | sort_by(.deployment, .type, .id)') | first }}
+      upstream: >-
+        {{ outputs.inventory.body | jq('
+          ' ~ outputs.walk.values.depends_on ~ ' as $ids
+          | [ .results[] | .id as $i | select([ $ids[] | select(. == $i) ] | length > 0) | { id, type: (.type | split(".") | last), owner: (.owner // "") } ]
+          | sort_by(.type, .id)') | first }}
+
+  - id: summarize
+    type: io.kestra.plugin.core.output.OutputValues
+    values:
+      deployments: "{{ outputs.enrich.values.impacted | jq('[ .[].deployment | select(. != \"\") ] | unique') | first }}"
+      owners: "{{ outputs.enrich.values.impacted | jq('[ .[].owner | select(. != \"\") ] | unique') | first }}"
+      by_type: "{{ outputs.enrich.values.impacted | jq('group_by(.type) | map({ (.[0].type): length }) | add // {}') | first }}"
+
+  # OutputValues keeps each value as JSON text, hence fromJson() before join and the loops.
+  - id: report
+    type: io.kestra.plugin.core.log.Log
+    message: |
+      {% set impacted = fromJson(outputs.enrich.values.impacted) %}{% set upstream = fromJson(outputs.enrich.values.upstream) %}{% set deps = fromJson(outputs.summarize.values.deployments) %}
+      Blast radius of {{ render(vars.target) }}
+      Impacted: {{ impacted | length }} assets in {{ deps | length }} deployment(s): {{ deps | join(', ') }}
+      By type: {{ outputs.summarize.values.by_type }}
+      Teams to notify: {{ fromJson(outputs.summarize.values.owners) | join(', ') }}
+      {% for a in impacted %}
+        - [{{ a.deployment }}] {{ a.type }} {{ a.id }} ({{ a.owner }}){% endfor %}
+      Depends on ({{ upstream | length }}):{% for a in upstream %}
+        - {{ a.type }} {{ a.id }} ({{ a.owner }}){% endfor %}
+
+outputs:
+  - id: impacted
+    type: JSON
+    value: "{{ outputs.enrich.values.impacted }}"
+  - id: deployments
+    type: JSON
+    value: "{{ outputs.summarize.values.deployments }}"
+  - id: owners
+    type: JSON
+    value: "{{ outputs.summarize.values.owners }}"
+  - id: depends_on
+    type: JSON
+    value: "{{ outputs.enrich.values.upstream }}"

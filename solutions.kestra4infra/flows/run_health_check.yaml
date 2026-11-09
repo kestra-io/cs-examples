@@ -1,0 +1,66 @@
+id: run_health_check
+namespace: solutions.kestra4infra
+
+labels:
+  kestra4infra: "true"
+  lifecycle: day-2
+
+description: |
+  Check an application end to end and record the result on its health check asset.
+
+  Offered on applications and health checks, and called by `renew_certificate` after a renewal.
+  **Simulated**: there is nothing behind the URLs, so the result is chosen with `outcome`. Pick
+  `degraded` to see `health_degraded_blast_radius` start on its own and report what is affected.
+
+inputs:
+  - id: target
+    type: SELECT
+    displayName: Application or health check
+    required: false
+    autoSelectFirst: true
+    expression: >-
+      {{ assets(namespace='solutions.kestra4infra', type='kestra4infra.Application')
+      | jq('[ .[] | select(.status != "destroyed") | .id ] | sort_by(. != "' ~ (labels.assetId ??? '') ~ '")')
+      | first }}
+
+  - id: outcome
+    type: SELECT
+    displayName: Simulated result
+    values: [healthy, degraded]
+    defaults: healthy
+
+variables:
+  target: "{{ labels.system.assetId ??? inputs.target ?? '' }}"
+
+tasks:
+  - id: no_target
+    type: io.kestra.plugin.core.execution.Fail
+    condition: "{{ render(vars.target) is empty }}"
+    errorMessage: Run this from an application or a health check, or pick an application from the list.
+
+  # Health checks and applications share the deployment prefix: <deployment>-health, <deployment>-app.
+  - id: ids
+    type: io.kestra.plugin.core.output.OutputValues
+    values:
+      dep: "{{ render(vars.target) | replace({'-health': '', '-app': ''}) }}"
+
+  - id: check
+    type: io.kestra.plugin.core.log.Log
+    message: "GET https://{{ outputs.ids.values.dep }}.k4i.corp/healthz -> {{ inputs.outcome == 'healthy' ? '200 in 38 ms' : '503 after 5000 ms' }} (simulated)."
+    assets:
+      inputs:
+        - id: "{{ outputs.ids.values.dep }}-app"
+      outputs:
+        - type: kestra4infra.HealthCheck
+          id: "{{ outputs.ids.values.dep }}-health"
+          namespace: solutions.kestra4infra
+          metadata:
+            health: "{{ inputs.outcome }}"
+            http_status: "{{ inputs.outcome == 'healthy' ? '200' : '503' }}"
+            latency_ms: "{{ inputs.outcome == 'healthy' ? '38' : '5000' }}"
+            last_checked_at: "{{ now(format='iso_milli', timeZone='UTC') }}"
+  # - id: check
+  #   type: io.kestra.plugin.core.http.Request
+  #   uri: "https://{{ outputs.ids.values.dep }}.k4i.corp/healthz"
+  #   options:
+  #     allowFailed: true

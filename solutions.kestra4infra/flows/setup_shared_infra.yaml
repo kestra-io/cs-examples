@@ -1,0 +1,141 @@
+id: setup_shared_infra
+namespace: solutions.kestra4infra
+
+labels:
+  kestra4infra: "true"
+  lifecycle: day-0
+
+description: |
+  Declares the shared infrastructure every deployment of this namespace builds on: the core switch,
+  the edge firewall, the DNS zone, the Active Directory domain, the issuing CA and the CIS baseline.
+
+  Run it once before `provision_deployment`. **No real system is touched**: each task only records
+  the asset, the way a discovery or CMDB import would. Running it again is safe, assets are upserted.
+
+  These assets are not part of any deployment, and that is the point: they are the common upstream
+  of many deployments, so their blast radius crosses deployment boundaries (a CA that expires takes
+  every certificate it issued with it, and every application behind those certificates).
+
+tasks:
+  - id: network
+    type: io.kestra.plugin.core.log.Log
+    message: "Recording the shared network devices (core switch, edge firewall)."
+    assets:
+      outputs:
+        - type: kestra4infra.NetworkDevice
+          id: k4i-core-sw-01
+          namespace: solutions.kestra4infra
+          displayName: core-sw-ams-01
+          description: Data-centre core switch carrying every application VLAN.
+          status: active
+          owner: network-team
+          assetActions:
+            - namespace: solutions.kestra4infra
+              flowId: blast_radius
+              label: Blast radius
+          metadata:
+            vendor: arista
+            model: 7050SX3-48YC8
+            os_version: EOS-4.31.2F
+            os_eol: "2028-03-31"
+            site: dc-ams-1
+            mgmt_ip: 10.0.0.11
+            support_contract_expires: "{{ now() | dateAdd(amount=120, unit='DAYS', format='yyyy-MM-dd', timeZone='UTC') }}"
+
+        - type: kestra4infra.Firewall
+          id: k4i-edge-fw-01
+          namespace: solutions.kestra4infra
+          displayName: edge-fw-ams-01
+          description: Perimeter firewall in front of every published application.
+          status: active
+          owner: security-team
+          assetActions:
+            - namespace: solutions.kestra4infra
+              flowId: blast_radius
+              label: Blast radius
+          metadata:
+            vendor: palo-alto
+            model: PA-3440
+            os_version: PAN-OS 11.1.4
+            site: dc-ams-1
+            rule_count: 1842
+
+  - id: naming_and_identity
+    type: io.kestra.plugin.core.log.Log
+    message: "Recording the DNS zone and the Active Directory domain."
+    assets:
+      outputs:
+        - type: kestra4infra.DnsZone
+          id: k4i-dns-zone
+          namespace: solutions.kestra4infra
+          displayName: k4i.corp
+          description: Internal DNS zone of the published applications.
+          status: active
+          owner: network-team
+          assetActions:
+            - namespace: solutions.kestra4infra
+              flowId: blast_radius
+              label: Blast radius
+          metadata:
+            provider: infoblox
+            zone: k4i.corp
+            dnssec: "true"
+
+        - type: kestra4infra.Directory
+          id: k4i-ad-domain
+          namespace: solutions.kestra4infra
+          displayName: corp.k4i (Active Directory)
+          description: Domain the servers join and the service accounts live in.
+          status: active
+          owner: identity-team
+          assetActions:
+            - namespace: solutions.kestra4infra
+              flowId: blast_radius
+              label: Blast radius
+          metadata:
+            forest: corp.k4i
+            functional_level: "2016"
+            servers_ou: OU=Servers,DC=corp,DC=k4i
+            service_accounts_ou: OU=ServiceAccounts,DC=corp,DC=k4i
+            password_max_age_days: "90"
+
+  - id: trust_and_config
+    type: io.kestra.plugin.core.log.Log
+    message: "Recording the issuing CA and the configuration baseline."
+    assets:
+      outputs:
+        # The CA's own expiry is its TTL: the date every certificate it issued stops being trusted.
+        - type: kestra4infra.CertificateAuthority
+          id: k4i-issuing-ca
+          namespace: solutions.kestra4infra
+          displayName: K4I Issuing CA G2
+          description: Internal issuing CA, signs the TLS certificates of the applications.
+          status: active
+          owner: security-team
+          ttl: "{{ now() | dateAdd(amount=200, unit='DAYS', format='iso_milli', timeZone='UTC') }}"
+          assetActions:
+            - namespace: solutions.kestra4infra
+              flowId: blast_radius
+              label: Blast radius
+          metadata:
+            subject: CN=K4I Issuing CA G2,O=K4I
+            parent: K4I Root CA
+            key_algorithm: RSA-4096
+            not_after: "{{ now() | dateAdd(amount=200, unit='DAYS', format='iso_milli', timeZone='UTC') }}"
+
+        - type: kestra4infra.ConfigBaseline
+          id: k4i-cis-baseline
+          namespace: solutions.kestra4infra
+          displayName: CIS RHEL 9 Level 1 (Ansible)
+          description: Hardening applied by Ansible to every server after it is built.
+          status: active
+          owner: platform-team
+          assetActions:
+            - namespace: solutions.kestra4infra
+              flowId: blast_radius
+              label: Blast radius
+          metadata:
+            benchmark: CIS Red Hat Enterprise Linux 9 v2.0.0 Level 1 Server
+            playbook: playbooks/cis_rhel9.yml
+            repository: git.k4i.corp/platform/ansible-baseline
+            version: "2.4.1"

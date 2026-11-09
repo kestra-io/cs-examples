@@ -1,0 +1,61 @@
+id: k4i-resize-vm
+namespace: solutions.kestra4infra
+type: io.kestra.plugin.ee.apps.Execution
+flowId: resize_vm
+
+displayName: Resize a server
+description: "Changes CPU and memory through Terraform. Check the server's blast radius first: the application on it restarts."
+tags:
+  - kestra4infra
+  - day-2
+  - compute
+
+access:
+  type: PRIVATE
+  catalog: true
+
+layout:
+  - on: OPEN
+    blocks:
+      - type: io.kestra.plugin.ee.apps.core.blocks.Markdown
+        content: |
+          ## Resize a server
+
+          Changes CPU and memory through Terraform. Check the server's blast radius first: the application on it restarts.
+
+      - type: io.kestra.plugin.ee.apps.execution.blocks.CreateExecutionForm
+
+      - type: io.kestra.plugin.ee.apps.execution.blocks.CreateExecutionButton
+        text: Resize
+        style: INFO
+
+  - on: RUNNING
+    blocks:
+      - type: io.kestra.plugin.ee.apps.core.blocks.Markdown
+        content: |
+          ## Resizing:
+
+      - type: io.kestra.plugin.ee.apps.execution.blocks.Gantt
+
+  - on: SUCCESS
+    blocks:
+      - type: io.kestra.plugin.ee.apps.core.blocks.Markdown
+        content: |
+          ## Done
+
+      - type: io.kestra.plugin.ee.apps.execution.blocks.Assets
+        filter:
+          include:
+            - io.kestra.plugin.ee.assets.VM
+
+  - on: FAILURE
+    blocks:
+      - type: io.kestra.plugin.ee.apps.core.blocks.Markdown
+        content: |
+          ## Resize a server: failed
+
+      - type: io.kestra.plugin.ee.apps.core.blocks.Stacktrace
+
+      - type: io.kestra.plugin.ee.apps.execution.blocks.Logs
+        filter:
+          logLevel: ERROR

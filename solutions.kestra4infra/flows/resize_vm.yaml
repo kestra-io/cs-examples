@@ -1,0 +1,59 @@
+id: resize_vm
+namespace: solutions.kestra4infra
+
+labels:
+  kestra4infra: "true"
+  lifecycle: day-2
+
+description: |
+  Change the CPU and memory of a server through Terraform.
+
+  Offered on every active VM. **Simulated**: only the inventory record changes; the Terraform task is
+  in a comment. Before resizing, check `blast_radius` on the VM: the application and everything
+  downstream of it see the restart.
+
+inputs:
+  - id: vm
+    type: SELECT
+    displayName: Server
+    required: false
+    autoSelectFirst: true
+    expression: >-
+      {{ assets(namespace='solutions.kestra4infra', type='io.kestra.plugin.ee.assets.VM')
+      | jq('[ .[] | select(.status == "active") | .id ] | sort_by(. != "' ~ (labels.assetId ??? '') ~ '")')
+      | first }}
+
+  - id: size
+    type: SELECT
+    displayName: New size
+    values: [small, medium, large]
+    defaults: large
+
+variables:
+  target: "{{ labels.system.assetId ??? inputs.vm ?? '' }}"
+
+tasks:
+  - id: no_target
+    type: io.kestra.plugin.core.execution.Fail
+    condition: "{{ render(vars.target) is empty }}"
+    errorMessage: Run this from a server's action button, or pick one from the list.
+
+  - id: resize
+    type: io.kestra.plugin.core.log.Log
+    message: |
+      terraform apply -var 'size={{ inputs.size }}' -target=module.vm for {{ render(vars.target) }} (simulated).
+      The server is powered off, resized and started again.
+    assets:
+      outputs:
+        - type: io.kestra.plugin.ee.assets.VM
+          id: "{{ render(vars.target) }}"
+          namespace: solutions.kestra4infra
+          state: running
+          metadata:
+            cpu: "{{ inputs.size == 'small' ? 2 : (inputs.size == 'medium' ? 4 : 8) }}"
+            memory_gb: "{{ inputs.size == 'small' ? 8 : (inputs.size == 'medium' ? 16 : 32) }}"
+            resized_at: "{{ now(format='iso_milli', timeZone='UTC') }}"
+  # - id: resize
+  #   type: io.kestra.plugin.terraform.cli.TerraformCLI
+  #   commands:
+  #     - terraform apply -auto-approve -var size={{ inputs.size }}

@@ -1,0 +1,66 @@
+id: k4i-provision-deployment
+namespace: solutions.kestra4infra
+type: io.kestra.plugin.ee.apps.Execution
+flowId: provision_deployment
+
+displayName: Request an application deployment
+description: "Servers, VLAN, security group, firewall rule, service account, DNS, TLS certificate, application and"
+tags:
+  - kestra4infra
+  - provisioning
+
+access:
+  type: PRIVATE
+  catalog: true
+
+layout:
+  - on: OPEN
+    blocks:
+      - type: io.kestra.plugin.ee.apps.core.blocks.Markdown
+        content: |
+          ## Request an application deployment
+
+          Servers, VLAN, security group, firewall rule, service account, DNS, TLS certificate, application and
+          health check, built in one request and recorded as one deployment with a lease.
+
+          Every resource lands in the inventory with its owner, its expiry dates and its day-2 actions.
+
+          _Demo environment: only the certificate is really issued, the other steps are simulated._
+
+      - type: io.kestra.plugin.ee.apps.execution.blocks.CreateExecutionForm
+
+      - type: io.kestra.plugin.ee.apps.execution.blocks.CreateExecutionButton
+        text: Provision
+        style: INFO
+
+  - on: RUNNING
+    blocks:
+      - type: io.kestra.plugin.ee.apps.core.blocks.Markdown
+        content: |
+          ## Building your deployment, step by step:
+
+      - type: io.kestra.plugin.ee.apps.execution.blocks.Gantt
+
+  - on: SUCCESS
+    blocks:
+      - type: io.kestra.plugin.ee.apps.core.blocks.Markdown
+        content: |
+          ## Done
+
+      - type: io.kestra.plugin.ee.apps.execution.blocks.Logs
+        filter:
+          taskIds:
+            - finalize
+      - type: io.kestra.plugin.ee.apps.execution.blocks.Assets
+
+  - on: FAILURE
+    blocks:
+      - type: io.kestra.plugin.ee.apps.core.blocks.Markdown
+        content: |
+          ## Request an application deployment: failed
+
+      - type: io.kestra.plugin.ee.apps.core.blocks.Stacktrace
+
+      - type: io.kestra.plugin.ee.apps.execution.blocks.Logs
+        filter:
+          logLevel: ERROR
