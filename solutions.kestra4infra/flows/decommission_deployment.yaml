@@ -1,0 +1,227 @@
+id: decommission_deployment
+namespace: solutions.kestra4infra
+
+labels:
+  kestra4infra: "true"
+  lifecycle: day-2
+
+description: |
+  Tear a deployment down in reverse dependency order, read from the inventory.
+
+  The resources to remove are not listed anywhere in this flow: they are the assets `partOf` the
+  deployment. Each step takes one kind of resource, last built first removed (health check,
+  certificate, DNS, application, servers, account, firewall rule, security group, VLAN), so the Gantt
+  shows the teardown order. Shared infrastructure (switch, firewall, zone, domain, CA) is untouched.
+
+  **Simulated**: every asset is marked `destroyed` with its TTL cleared, so it drops out of the
+  expiry triggers; the production call is named in each log line.
+
+inputs:
+  - id: deployment
+    type: SELECT
+    displayName: Deployment
+    required: false
+    autoSelectFirst: true
+    expression: >-
+      {{ assets(namespace='solutions.kestra4infra', type='io.kestra.plugin.ee.assets.Deployment')
+      | jq('[ .[] | select(.status != "destroyed") | .id ] | sort_by(. != "' ~ (labels.assetId ??? '') ~ '")')
+      | first }}
+
+  - id: reason
+    type: SELECT
+    displayName: Reason
+    values: [lease expired, no longer needed, migrated, cost reduction]
+    defaults: no longer needed
+
+variables:
+  target: "{{ labels.system.assetId ??? inputs.deployment ?? '' }}"
+
+tasks:
+  - id: no_target
+    type: io.kestra.plugin.core.execution.Fail
+    condition: "{{ render(vars.target) is empty }}"
+    errorMessage: Run this from a deployment's action button, or pick a deployment from the list.
+
+  # One list per resource type, from the deployment's children.
+  - id: children
+    type: io.kestra.plugin.core.output.OutputValues
+    values:
+      health: "{{ assets(namespace='solutions.kestra4infra', type='kestra4infra.HealthCheck') | jq('[ .[] | select(.partOf.id == \"' ~ render(vars.target) ~ '\" and .status != \"destroyed\") | .id ]') | first }}"
+      cert: "{{ assets(namespace='solutions.kestra4infra', type='kestra4infra.Certificate') | jq('[ .[] | select(.partOf.id == \"' ~ render(vars.target) ~ '\" and .status != \"destroyed\") | .id ]') | first }}"
+      dns: "{{ assets(namespace='solutions.kestra4infra', type='kestra4infra.DnsRecord') | jq('[ .[] | select(.partOf.id == \"' ~ render(vars.target) ~ '\" and .status != \"destroyed\") | .id ]') | first }}"
+      app: "{{ assets(namespace='solutions.kestra4infra', type='kestra4infra.Application') | jq('[ .[] | select(.partOf.id == \"' ~ render(vars.target) ~ '\" and .status != \"destroyed\") | .id ]') | first }}"
+      vm: "{{ assets(namespace='solutions.kestra4infra', type='io.kestra.plugin.ee.assets.VM') | jq('[ .[] | select(.partOf.id == \"' ~ render(vars.target) ~ '\" and .status != \"destroyed\") | .id ]') | first }}"
+      svc: "{{ assets(namespace='solutions.kestra4infra', type='kestra4infra.ServiceAccount') | jq('[ .[] | select(.partOf.id == \"' ~ render(vars.target) ~ '\" and .status != \"destroyed\") | .id ]') | first }}"
+      fw: "{{ assets(namespace='solutions.kestra4infra', type='kestra4infra.FirewallRule') | jq('[ .[] | select(.partOf.id == \"' ~ render(vars.target) ~ '\" and .status != \"destroyed\") | .id ]') | first }}"
+      sg: "{{ assets(namespace='solutions.kestra4infra', type='kestra4infra.SecurityGroup') | jq('[ .[] | select(.partOf.id == \"' ~ render(vars.target) ~ '\" and .status != \"destroyed\") | .id ]') | first }}"
+      vlan: "{{ assets(namespace='solutions.kestra4infra', type='kestra4infra.NetworkSegment') | jq('[ .[] | select(.partOf.id == \"' ~ render(vars.target) ~ '\" and .status != \"destroyed\") | .id ]') | first }}"
+
+  - id: start
+    type: io.kestra.plugin.core.log.Log
+    message: |
+      Decommissioning {{ render(vars.target) }} ({{ inputs.reason }}), last built first removed:
+      health {{ outputs.children.values.health }}, certificate {{ outputs.children.values.cert }}, dns {{ outputs.children.values.dns }},
+      application {{ outputs.children.values.app }}, servers {{ outputs.children.values.vm }}, account {{ outputs.children.values.svc }},
+      firewall {{ outputs.children.values.fw }}, security group {{ outputs.children.values.sg }}, vlan {{ outputs.children.values.vlan }}
+
+  - id: remove_health_check
+    type: io.kestra.plugin.core.flow.Loop
+    values: "{{ outputs.children.values.health }}"
+    runIf: "{{ outputs.children.values.health != '[]' }}"
+    tasks:
+      - id: health
+        type: io.kestra.plugin.core.log.Log
+        message: "Removing monitor {{ item.value }} (simulated)."
+        assets:
+          outputs:
+            - type: kestra4infra.HealthCheck
+              id: "{{ item.value }}"
+              namespace: solutions.kestra4infra
+              status: destroyed
+              metadata:
+                health: removed
+
+  - id: revoke_certificate
+    type: io.kestra.plugin.core.flow.Loop
+    values: "{{ outputs.children.values.cert }}"
+    runIf: "{{ outputs.children.values.cert != '[]' }}"
+    tasks:
+      - id: cert
+        type: io.kestra.plugin.core.log.Log
+        message: "Revoking {{ item.value }} at the CA (simulated: Vault PKI /revoke)."
+        assets:
+          outputs:
+            - type: kestra4infra.Certificate
+              id: "{{ item.value }}"
+              namespace: solutions.kestra4infra
+              status: destroyed
+              ttl: ""
+              metadata:
+                revoked_at: "{{ now(format='iso_milli', timeZone='UTC') }}"
+                revocation_reason: cessationOfOperation
+
+  - id: delete_dns
+    type: io.kestra.plugin.core.flow.Loop
+    values: "{{ outputs.children.values.dns }}"
+    runIf: "{{ outputs.children.values.dns != '[]' }}"
+    tasks:
+      - id: dns
+        type: io.kestra.plugin.core.log.Log
+        message: "Deleting DNS record {{ item.value }} (simulated: Infoblox WAPI)."
+        assets:
+          outputs:
+            - type: kestra4infra.DnsRecord
+              id: "{{ item.value }}"
+              namespace: solutions.kestra4infra
+              status: destroyed
+
+  - id: uninstall_app
+    type: io.kestra.plugin.core.flow.Loop
+    values: "{{ outputs.children.values.app }}"
+    runIf: "{{ outputs.children.values.app != '[]' }}"
+    tasks:
+      - id: app
+        type: io.kestra.plugin.core.log.Log
+        message: "Stopping and uninstalling {{ item.value }} (simulated: Ansible)."
+        assets:
+          outputs:
+            - type: kestra4infra.Application
+              id: "{{ item.value }}"
+              namespace: solutions.kestra4infra
+              status: destroyed
+
+  - id: destroy_vms
+    type: io.kestra.plugin.core.flow.Loop
+    values: "{{ outputs.children.values.vm }}"
+    runIf: "{{ outputs.children.values.vm != '[]' }}"
+    tasks:
+      - id: vm
+        type: io.kestra.plugin.core.log.Log
+        message: "terraform destroy -target for {{ item.value }}, then removing its AD computer object (simulated)."
+        assets:
+          outputs:
+            - type: io.kestra.plugin.ee.assets.VM
+              id: "{{ item.value }}"
+              namespace: solutions.kestra4infra
+              status: destroyed
+              state: terminated
+              metadata:
+                ad_computer_dn: null
+
+  - id: disable_service_account
+    type: io.kestra.plugin.core.flow.Loop
+    values: "{{ outputs.children.values.svc }}"
+    runIf: "{{ outputs.children.values.svc != '[]' }}"
+    tasks:
+      - id: svc
+        type: io.kestra.plugin.core.log.Log
+        message: "Disabling {{ item.value }} in AD and deleting its Vault secret (simulated)."
+        assets:
+          outputs:
+            - type: kestra4infra.ServiceAccount
+              id: "{{ item.value }}"
+              namespace: solutions.kestra4infra
+              status: destroyed
+              ttl: ""
+              metadata:
+                disabled_at: "{{ now(format='iso_milli', timeZone='UTC') }}"
+
+  - id: remove_firewall_rule
+    type: io.kestra.plugin.core.flow.Loop
+    values: "{{ outputs.children.values.fw }}"
+    runIf: "{{ outputs.children.values.fw != '[]' }}"
+    tasks:
+      - id: fw
+        type: io.kestra.plugin.core.log.Log
+        message: "Removing rule {{ item.value }} from edge-fw-ams-01 (simulated: PAN-OS API)."
+        assets:
+          outputs:
+            - type: kestra4infra.FirewallRule
+              id: "{{ item.value }}"
+              namespace: solutions.kestra4infra
+              status: destroyed
+
+  - id: delete_security_group
+    type: io.kestra.plugin.core.flow.Loop
+    values: "{{ outputs.children.values.sg }}"
+    runIf: "{{ outputs.children.values.sg != '[]' }}"
+    tasks:
+      - id: sg
+        type: io.kestra.plugin.core.log.Log
+        message: "Deleting security group {{ item.value }} (simulated)."
+        assets:
+          outputs:
+            - type: kestra4infra.SecurityGroup
+              id: "{{ item.value }}"
+              namespace: solutions.kestra4infra
+              status: destroyed
+
+  - id: release_vlan
+    type: io.kestra.plugin.core.flow.Loop
+    values: "{{ outputs.children.values.vlan }}"
+    runIf: "{{ outputs.children.values.vlan != '[]' }}"
+    tasks:
+      - id: vlan
+        type: io.kestra.plugin.core.log.Log
+        message: "Removing {{ item.value }} from the core switch trunks and releasing the prefix in IPAM (simulated)."
+        assets:
+          outputs:
+            - type: kestra4infra.NetworkSegment
+              id: "{{ item.value }}"
+              namespace: solutions.kestra4infra
+              status: destroyed
+
+  - id: close_deployment
+    type: io.kestra.plugin.core.log.Log
+    message: "{{ render(vars.target) }} decommissioned ({{ inputs.reason }})."
+    assets:
+      outputs:
+        - type: io.kestra.plugin.ee.assets.Deployment
+          id: "{{ render(vars.target) }}"
+          namespace: solutions.kestra4infra
+          status: destroyed
+          ttl: ""
+          metadata:
+            lease_alert: null
+            decommissioned_at: "{{ now(format='iso_milli', timeZone='UTC') }}"
+            decommission_reason: "{{ inputs.reason }}"

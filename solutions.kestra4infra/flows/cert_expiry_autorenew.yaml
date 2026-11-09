@@ -1,0 +1,34 @@
+id: cert_expiry_autorenew
+namespace: solutions.kestra4infra
+
+labels:
+  kestra4infra: "true"
+  lifecycle: trigger
+
+description: |
+  Asset lifecycle trigger: a certificate within 15 days of its expiry is renewed, unattended.
+
+  No schedule and no scan: the `TtlTrigger` fires on the certificate's TTL, which provisioning set
+  to the real notAfter. Provision with a short `cert_validity_days` (say 10) to see it fire.
+
+triggers:
+  - id: expiring
+    type: io.kestra.plugin.ee.assets.TtlTrigger
+    on: EXPIRING
+    expiresWithin: P15D
+    namespace: solutions.kestra4infra
+    assetType: kestra4infra.Certificate
+
+tasks:
+  - id: announce
+    type: io.kestra.plugin.core.log.Log
+    message: "{{ trigger.asset.id }} expires {{ trigger.asset.ttl }}: renewing it."
+
+  - id: renew
+    type: io.kestra.plugin.core.flow.Subflow
+    namespace: solutions.kestra4infra
+    flowId: renew_certificate
+    wait: true
+    transmitFailed: true
+    inputs:
+      certificate: "{{ trigger.asset.id }}"

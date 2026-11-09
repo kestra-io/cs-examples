@@ -1,0 +1,128 @@
+id: renew_certificate
+namespace: solutions.kestra4infra
+
+labels:
+  kestra4infra: "true"
+  lifecycle: day-2
+
+description: |
+  Renew a TLS certificate, push it to its application, and check the application still answers.
+
+  Offered on every certificate, and started on its own by `cert_expiry_autorenew` when a
+  certificate gets within 15 days of its expiry: the certificate's TTL **is** its notAfter, so the
+  asset lifecycle trigger and the certificate lifecycle are the same clock.
+
+  The certificate is really issued with openssl (self-signed here, Vault PKI or ACME in production).
+  The new notAfter moves the TTL, the previous serial is kept in the metadata.
+
+inputs:
+  - id: certificate
+    type: SELECT
+    displayName: Certificate
+    required: false
+    autoSelectFirst: true
+    expression: >-
+      {{ assets(namespace='solutions.kestra4infra', type='kestra4infra.Certificate')
+      | jq('[ .[] | select(.status != "destroyed") | .id ] | sort_by(. != "' ~ (labels.assetId ??? '') ~ '")')
+      | first }}
+
+  - id: validity_days
+    type: INT
+    displayName: New validity (days)
+    defaults: 90
+    min: 1
+
+variables:
+  target: "{{ labels.system.assetId ??? inputs.certificate ?? '' }}"
+
+tasks:
+  - id: no_target
+    type: io.kestra.plugin.core.execution.Fail
+    condition: "{{ render(vars.target) is empty }}"
+    errorMessage: Run this from a certificate's action button, or pick a certificate from the list.
+
+  - id: current
+    type: io.kestra.plugin.core.output.OutputValues
+    values:
+      cn: "{{ assets(namespace='solutions.kestra4infra', type='kestra4infra.Certificate') | jq('.[] | select(.id == \"' ~ render(vars.target) ~ '\") | .metadata.subject_cn') | first }}"
+      app: "{{ assets(namespace='solutions.kestra4infra', type='kestra4infra.Certificate') | jq('.[] | select(.id == \"' ~ render(vars.target) ~ '\") | .metadata.installed_on') | first }}"
+      dep: "{{ assets(namespace='solutions.kestra4infra', type='kestra4infra.Certificate') | jq('.[] | select(.id == \"' ~ render(vars.target) ~ '\") | .partOf.id') | first }}"
+      serial: "{{ assets(namespace='solutions.kestra4infra', type='kestra4infra.Certificate') | jq('.[] | select(.id == \"' ~ render(vars.target) ~ '\") | .metadata.serial') | first }}"
+      not_after: "{{ assets(namespace='solutions.kestra4infra', type='kestra4infra.Certificate') | jq('.[] | select(.id == \"' ~ render(vars.target) ~ '\") | .metadata.not_after') | first }}"
+
+  - id: issue_certificate
+    type: io.kestra.plugin.scripts.shell.Commands
+    taskRunner:
+      type: io.kestra.plugin.core.runner.Process
+    outputFiles:
+      - cert.pem
+    commands:
+      - |
+        set -e
+        FQDN="{{ outputs.current.values.cn }}"
+        openssl req -x509 -newkey rsa:2048 -nodes -keyout key.pem -out cert.pem \
+          -days {{ inputs.validity_days }} -subj "/CN=$FQDN/O=K4I" \
+          -addext "subjectAltName=DNS:$FQDN,DNS:www.$FQDN" 2>/dev/null
+        rm -f key.pem
+        NB=$(date -u -d "$(openssl x509 -in cert.pem -noout -startdate | cut -d= -f2)" +%Y-%m-%dT%H:%M:%S.000Z)
+        NA=$(date -u -d "$(openssl x509 -in cert.pem -noout -enddate | cut -d= -f2)" +%Y-%m-%dT%H:%M:%S.000Z)
+        SERIAL=$(openssl x509 -in cert.pem -noout -serial | cut -d= -f2)
+        FP=$(openssl x509 -in cert.pem -noout -fingerprint -sha256 | cut -d= -f2)
+        echo "renewed $FQDN: was valid until {{ outputs.current.values.not_after }}, now until $NA"
+        echo "::{\"outputs\":{\"not_before\":\"$NB\",\"not_after\":\"$NA\",\"serial\":\"$SERIAL\",\"fingerprint\":\"$FP\"}}::"
+
+  - id: record_certificate
+    type: io.kestra.plugin.core.log.Log
+    message: "{{ render(vars.target) }} renewed until {{ outputs.issue_certificate.vars.not_after }}."
+    assets:
+      inputs:
+        - id: k4i-issuing-ca
+        - id: "{{ outputs.current.values.dep }}-dns"
+      outputs:
+        - type: kestra4infra.Certificate
+          id: "{{ render(vars.target) }}"
+          namespace: solutions.kestra4infra
+          status: active
+          ttl: "{{ outputs.issue_certificate.vars.not_after }}"
+          metadata:
+            serial: "{{ outputs.issue_certificate.vars.serial }}"
+            previous_serial: "{{ outputs.current.values.serial }}"
+            fingerprint_sha256: "{{ outputs.issue_certificate.vars.fingerprint }}"
+            not_before: "{{ outputs.issue_certificate.vars.not_before }}"
+            not_after: "{{ outputs.issue_certificate.vars.not_after }}"
+            renewed_at: "{{ now(format='iso_milli', timeZone='UTC') }}"
+            renewed_by: "{{ trigger.flowId ??? labels.system.username ??? 'api' }}"
+            pem_file: "{{ outputs.issue_certificate.outputFiles['cert.pem'] }}"
+
+  - id: install_certificate
+    type: io.kestra.plugin.core.log.Log
+    message: "Pushing the new certificate to {{ outputs.current.values.app }} and reloading nginx on each server (simulated)."
+    assets:
+      inputs:
+        - id: "{{ render(vars.target) }}"
+      outputs:
+        - type: kestra4infra.Application
+          id: "{{ outputs.current.values.app }}"
+          namespace: solutions.kestra4infra
+          metadata:
+            tls_expires_at: "{{ outputs.issue_certificate.vars.not_after }}"
+
+  - id: update_deployment
+    type: io.kestra.plugin.core.log.Log
+    message: "Recording the new expiry on {{ outputs.current.values.dep }}."
+    assets:
+      outputs:
+        - type: io.kestra.plugin.ee.assets.Deployment
+          id: "{{ outputs.current.values.dep }}"
+          namespace: solutions.kestra4infra
+          metadata:
+            cert_expires_at: "{{ outputs.issue_certificate.vars.not_after }}"
+
+  - id: verify
+    type: io.kestra.plugin.core.flow.Subflow
+    namespace: solutions.kestra4infra
+    flowId: run_health_check
+    wait: true
+    transmitFailed: true
+    inputs:
+      target: "{{ outputs.current.values.app }}"

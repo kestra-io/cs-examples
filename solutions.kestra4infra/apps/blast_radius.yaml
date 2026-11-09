@@ -1,0 +1,63 @@
+id: k4i-blast-radius
+namespace: solutions.kestra4infra
+type: io.kestra.plugin.ee.apps.Execution
+flowId: blast_radius
+
+displayName: Blast radius of an asset
+description: "What breaks if this asset breaks, which deployments and teams are hit, and what the asset depends on."
+tags:
+  - kestra4infra
+  - risk
+
+access:
+  type: PRIVATE
+  catalog: true
+
+layout:
+  - on: OPEN
+    blocks:
+      - type: io.kestra.plugin.ee.apps.core.blocks.Markdown
+        content: |
+          ## Blast radius of an asset
+
+          What breaks if this asset breaks, which deployments and teams are hit, and what the asset depends on.
+
+          Read from the dependency graph the provisioning tasks recorded. Try the issuing CA or the core switch.
+
+      - type: io.kestra.plugin.ee.apps.execution.blocks.CreateExecutionForm
+
+      - type: io.kestra.plugin.ee.apps.execution.blocks.CreateExecutionButton
+        text: Analyse
+        style: INFO
+
+  - on: RUNNING
+    blocks:
+      - type: io.kestra.plugin.ee.apps.core.blocks.Markdown
+        content: |
+          ## Walking the dependency graph:
+
+      - type: io.kestra.plugin.ee.apps.execution.blocks.Gantt
+
+  - on: SUCCESS
+    blocks:
+      - type: io.kestra.plugin.ee.apps.core.blocks.Markdown
+        content: |
+          ## Done
+
+      - type: io.kestra.plugin.ee.apps.execution.blocks.Logs
+        filter:
+          taskIds:
+            - report
+      - type: io.kestra.plugin.ee.apps.execution.blocks.Outputs
+
+  - on: FAILURE
+    blocks:
+      - type: io.kestra.plugin.ee.apps.core.blocks.Markdown
+        content: |
+          ## Blast radius of an asset: failed
+
+      - type: io.kestra.plugin.ee.apps.core.blocks.Stacktrace
+
+      - type: io.kestra.plugin.ee.apps.execution.blocks.Logs
+        filter:
+          logLevel: ERROR

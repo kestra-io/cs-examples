@@ -1,0 +1,624 @@
+id: provision_deployment
+namespace: solutions.kestra4infra
+
+labels:
+  kestra4infra: "true"
+  lifecycle: day-1
+
+description: |
+  End-to-end provisioning of an application deployment, in the order a platform team builds it:
+
+  | # | Step | System it would call | Asset recorded |
+  |---|---|---|---|
+  | 1 | Register the deployment | (catalog request) | `Deployment` |
+  | 2 | VLAN and subnet on the core switch | NetBox IPAM, Arista eAPI | `NetworkSegment` |
+  | 3 | Security group | vSphere NSX / cloud SG | `SecurityGroup` |
+  | 4 | Firewall rule on the edge firewall | Palo Alto | `FirewallRule` |
+  | 5 | Service account | Active Directory | `ServiceAccount` (TTL = password expiry) |
+  | 6 | One VM per instance | Terraform (vSphere) | `VM` |
+  | 7 | Join the domain | Active Directory | VM metadata |
+  | 8 | Hardening | Ansible, CIS baseline | VM metadata |
+  | 9 | Install the application | Ansible | `Application` |
+  | 10 | DNS record | Infoblox | `DnsRecord` |
+  | 11 | TLS certificate, **really issued with openssl** | Vault PKI / ACME | `Certificate` (TTL = notAfter) |
+  | 12 | Install the certificate | Ansible | `Application` metadata |
+  | 13 | Health check | HTTP | `HealthCheck` |
+
+  **Only step 11 runs for real** (no Terraform, Ansible or Docker on this instance). Every other
+  step logs what it would do and records the asset; the production task is in a comment under it.
+
+  Every asset is `partOf` the deployment, and each task declares the assets it depends on as
+  `inputs`. That is what draws the dependency graph: switch > VLAN > VM > application > certificate
+  > health check. `blast_radius` walks it, and the day-2 actions hang off each asset.
+
+  Run `setup_shared_infra` once first.
+
+inputs:
+  - id: app
+    type: STRING
+    displayName: Application short name
+    defaults: orders
+    validator: ^[a-z][a-z0-9]{2,15}$
+
+  - id: env
+    type: SELECT
+    displayName: Environment
+    values: [prod, uat, dev]
+    defaults: prod
+
+  - id: vm_count
+    type: INT
+    displayName: Number of servers
+    defaults: 2
+    min: 1
+    max: 6
+
+  - id: vm_size
+    type: SELECT
+    displayName: Server size
+    values: [small, medium, large]
+    defaults: medium
+
+  - id: owner
+    type: SELECT
+    displayName: Owning team
+    values: [payments-team, billing-team, platform-team, it-ops]
+    defaults: payments-team
+
+  - id: cost_center
+    type: STRING
+    displayName: Cost center
+    defaults: CC-3300
+
+  - id: change_ticket
+    type: STRING
+    displayName: Change ticket
+    defaults: CHG0041234
+
+  - id: lease_days
+    type: INT
+    displayName: Lease (days), the deployment's TTL
+    defaults: 90
+    min: 1
+
+  - id: cert_validity_days
+    type: INT
+    displayName: Certificate validity (days)
+    description: Short values let you watch the certificate expiry trigger fire.
+    defaults: 90
+    min: 1
+
+  - id: password_max_age_days
+    type: INT
+    displayName: Service account password age (days)
+    description: Short values let you watch the rotation trigger fire.
+    defaults: 90
+    min: 1
+
+tasks:
+  # Computed once, read by every task. In a task rather than in `variables`, so the expressions are
+  # rendered.
+  - id: ctx
+    type: io.kestra.plugin.core.output.OutputValues
+    values:
+      dep: "{{ inputs.app }}-{{ inputs.env }}"
+      fqdn: "{{ inputs.app }}-{{ inputs.env }}.k4i.corp"
+      vlan: "{{ inputs.env == 'prod' ? 210 : (inputs.env == 'uat' ? 220 : 230) }}"
+      cpu: "{{ inputs.vm_size == 'small' ? 2 : (inputs.vm_size == 'medium' ? 4 : 8) }}"
+      memory_gb: "{{ inputs.vm_size == 'small' ? 8 : (inputs.vm_size == 'medium' ? 16 : 32) }}"
+      vm_numbers: "{{ range(1, inputs.vm_count) }}"
+      ips: "{% set v = inputs.env == 'prod' ? 210 : (inputs.env == 'uat' ? 220 : 230) %}{% for i in range(1, inputs.vm_count) %}10.42.{{ v }}.1{{ i }}{% if not loop.last %}, {% endif %}{% endfor %}"
+      lease_until: "{{ now() | dateAdd(amount=inputs.lease_days, unit='DAYS', format='iso_milli', timeZone='UTC') }}"
+      password_expires: "{{ now() | dateAdd(amount=inputs.password_max_age_days, unit='DAYS', format='iso_milli', timeZone='UTC') }}"
+      requested_by: "{{ labels.system.username ??? 'api' }}"
+
+  - id: label_execution
+    type: io.kestra.plugin.core.execution.Labels
+    labels:
+      k4i.deployment: "{{ outputs.ctx.values.dep }}"
+
+  # 1. The deployment is recorded first, as `provisioning`, so a half-built deployment is visible
+  #    on the Deployments page with what it already has.
+  - id: register_deployment
+    type: io.kestra.plugin.core.log.Log
+    message: "Registering deployment {{ outputs.ctx.values.dep }} for {{ inputs.owner }} ({{ inputs.change_ticket }})."
+    assets:
+      outputs:
+        - type: io.kestra.plugin.ee.assets.Deployment
+          id: "{{ outputs.ctx.values.dep }}"
+          namespace: solutions.kestra4infra
+          displayName: "{{ inputs.app | capitalize }} ({{ inputs.env }})"
+          description: "{{ inputs.vm_count }} x {{ inputs.vm_size }} servers behind https://{{ outputs.ctx.values.fqdn }}"
+          status: provisioning
+          owner: "{{ inputs.owner }}"
+          ttl: "{{ outputs.ctx.values.lease_until }}"
+          assetActions:
+            - namespace: solutions.kestra4infra
+              flowId: blast_radius
+              label: Blast radius
+            - namespace: solutions.kestra4infra
+              flowId: extend_lease
+              label: Extend lease
+              when:
+                - field: status
+                  operator: EQUAL_TO
+                  value: active
+            - namespace: solutions.kestra4infra
+              flowId: decommission_deployment
+              label: Decommission
+              when:
+                - field: status
+                  operator: NOT_EQUAL_TO
+                  value: destroyed
+          metadata:
+            environment: "{{ inputs.env }}"
+            cost_center: "{{ inputs.cost_center }}"
+            change_ticket: "{{ inputs.change_ticket }}"
+            requested_by: "{{ outputs.ctx.values.requested_by }}"
+            business_service: "{{ inputs.app }}"
+            data_classification: "{{ inputs.env == 'prod' ? 'confidential' : 'internal' }}"
+            provisioning_execution: "{{ execution.id }}"
+
+  # 2. Network device: a VLAN and its subnet on the shared core switch.
+  - id: network_segment
+    type: io.kestra.plugin.core.log.Log
+    message: |
+      Allocating VLAN {{ outputs.ctx.values.vlan }} and 10.42.{{ outputs.ctx.values.vlan }}.0/24 in IPAM,
+      then trunking it on core-sw-ams-01 (simulated).
+    assets:
+      inputs:
+        - id: k4i-core-sw-01
+      outputs:
+        - type: kestra4infra.NetworkSegment
+          id: "{{ outputs.ctx.values.dep }}-vlan"
+          namespace: solutions.kestra4infra
+          displayName: "VLAN {{ outputs.ctx.values.vlan }} {{ outputs.ctx.values.dep }}"
+          status: active
+          owner: network-team
+          partOf:
+            id: "{{ outputs.ctx.values.dep }}"
+          related:
+            - id: k4i-core-sw-01
+              role: carried-on
+          assetActions:
+            - namespace: solutions.kestra4infra
+              flowId: blast_radius
+              label: Blast radius
+          metadata:
+            vlan_id: "{{ outputs.ctx.values.vlan }}"
+            subnet: "10.42.{{ outputs.ctx.values.vlan }}.0/24"
+            gateway: "10.42.{{ outputs.ctx.values.vlan }}.1"
+            switch: core-sw-ams-01
+            trunk_ports: Ethernet49/1, Ethernet50/1
+  # - id: reserve_gateway
+  #   type: io.kestra.plugin.ee.netbox.ipam.AssignIpAddress          # NetBox IPAM
+  # - id: trunk_vlan
+  #   type: io.kestra.plugin.ansible.cli.AnsibleCLI                   # arista.eos collection
+  #   commands:
+  #     - ansible-playbook playbooks/vlan.yml -e vlan_id={{ outputs.ctx.values.vlan }}
+
+  # 3. Security group on the segment.
+  - id: security_group
+    type: io.kestra.plugin.core.log.Log
+    message: "Creating security group sg-{{ outputs.ctx.values.dep }}: 443 from the corporate range, 22 from the bastion (simulated)."
+    assets:
+      inputs:
+        - id: "{{ outputs.ctx.values.dep }}-vlan"
+      outputs:
+        - type: kestra4infra.SecurityGroup
+          id: "{{ outputs.ctx.values.dep }}-sg"
+          namespace: solutions.kestra4infra
+          displayName: "sg-{{ outputs.ctx.values.dep }}"
+          status: active
+          owner: security-team
+          partOf:
+            id: "{{ outputs.ctx.values.dep }}"
+          related:
+            - id: "{{ outputs.ctx.values.dep }}-vlan"
+              role: applied-to
+          assetActions:
+            - namespace: solutions.kestra4infra
+              flowId: blast_radius
+              label: Blast radius
+          metadata:
+            ingress: "tcp/443 from 10.0.0.0/8; tcp/22 from 10.0.5.10/32 (bastion)"
+            egress: "tcp/443 to proxy; udp/53 to dns"
+            review_due: "{{ now() | dateAdd(amount=180, unit='DAYS', format='yyyy-MM-dd', timeZone='UTC') }}"
+
+  # 4. Publishing rule on the shared edge firewall.
+  - id: firewall_rule
+    type: io.kestra.plugin.core.log.Log
+    message: "Adding rule allow-https-{{ outputs.ctx.values.dep }} on edge-fw-ams-01 (simulated)."
+    assets:
+      inputs:
+        - id: k4i-edge-fw-01
+        - id: "{{ outputs.ctx.values.dep }}-vlan"
+      outputs:
+        - type: kestra4infra.FirewallRule
+          id: "{{ outputs.ctx.values.dep }}-fw-https"
+          namespace: solutions.kestra4infra
+          displayName: "allow-https-{{ outputs.ctx.values.dep }}"
+          status: active
+          owner: security-team
+          partOf:
+            id: "{{ outputs.ctx.values.dep }}"
+          related:
+            - id: k4i-edge-fw-01
+              role: enforced-by
+          assetActions:
+            - namespace: solutions.kestra4infra
+              flowId: blast_radius
+              label: Blast radius
+          metadata:
+            device: edge-fw-ams-01
+            source: corporate
+            destination: "10.42.{{ outputs.ctx.values.vlan }}.0/24"
+            service: tcp/443
+            change_ticket: "{{ inputs.change_ticket }}"
+            # Rules are recertified yearly: an expiry that is not a TTL, read by audits.
+            recertify_by: "{{ now() | dateAdd(amount=365, unit='DAYS', format='yyyy-MM-dd', timeZone='UTC') }}"
+  # - id: firewall_rule
+  #   type: io.kestra.plugin.core.http.Request                         # PAN-OS REST API
+  #   uri: https://edge-fw-ams-01/restapi/v11.1/Policies/SecurityRules
+
+  # 5. The account the application runs as. Its TTL is the password expiry, which is what the
+  #    `service_account_autorotate` trigger watches.
+  - id: service_account
+    type: io.kestra.plugin.core.log.Log
+    message: "Creating svc-{{ outputs.ctx.values.dep }} in OU=ServiceAccounts (simulated)."
+    assets:
+      inputs:
+        - id: k4i-ad-domain
+      outputs:
+        - type: kestra4infra.ServiceAccount
+          id: "{{ outputs.ctx.values.dep }}-svc"
+          namespace: solutions.kestra4infra
+          displayName: "svc-{{ outputs.ctx.values.dep }}"
+          status: active
+          owner: "{{ inputs.owner }}"
+          ttl: "{{ outputs.ctx.values.password_expires }}"
+          partOf:
+            id: "{{ outputs.ctx.values.dep }}"
+          related:
+            - id: k4i-ad-domain
+              role: member-of
+          assetActions:
+            - namespace: solutions.kestra4infra
+              flowId: rotate_service_account
+              label: Rotate password
+              when:
+                - field: status
+                  operator: EQUAL_TO
+                  value: active
+            - namespace: solutions.kestra4infra
+              flowId: blast_radius
+              label: Blast radius
+          metadata:
+            sam_account_name: "svc-{{ outputs.ctx.values.dep }}"
+            upn: "svc-{{ outputs.ctx.values.dep }}@corp.k4i"
+            distinguished_name: "CN=svc-{{ outputs.ctx.values.dep }},OU=ServiceAccounts,DC=corp,DC=k4i"
+            groups: "GG-{{ inputs.app | upper }}-RUNTIME"
+            password_last_set: "{{ now(format='iso_milli', timeZone='UTC') }}"
+            password_expires_at: "{{ outputs.ctx.values.password_expires }}"
+            # The account itself ends with the deployment's lease, the password well before.
+            account_expires_at: "{{ outputs.ctx.values.lease_until }}"
+            secret_path: "vault:kv/apps/{{ outputs.ctx.values.dep }}/svc"
+  # - id: create_account
+  #   type: io.kestra.plugin.scripts.powershell.Commands               # New-ADUser, password to Vault
+  #   commands:
+  #     - New-ADUser -Name svc-{{ outputs.ctx.values.dep }} -Path "OU=ServiceAccounts,DC=corp,DC=k4i" ...
+
+  # 6 to 10, per server. One iteration builds one server end to end, so a server's lineage reads
+  # top to bottom on its own: VLAN + SG > VM; AD > VM; baseline > VM; VM + account > application;
+  # VM + zone > DNS record.
+  - id: per_server
+    type: io.kestra.plugin.core.flow.Loop
+    values: "{{ outputs.ctx.values.vm_numbers }}"
+    tasks:
+      - id: terraform_vm
+        type: io.kestra.plugin.core.log.Log
+        message: |
+          terraform apply -target=module.vm["web-0{{ item.value }}"] (simulated)
+          {{ outputs.ctx.values.cpu }} vCPU, {{ outputs.ctx.values.memory_gb }} GB, RHEL 9.4, 10.42.{{ outputs.ctx.values.vlan }}.1{{ item.value }}
+        assets:
+          inputs:
+            - id: "{{ outputs.ctx.values.dep }}-vlan"
+            - id: "{{ outputs.ctx.values.dep }}-sg"
+          outputs:
+            - type: io.kestra.plugin.ee.assets.VM
+              id: "{{ outputs.ctx.values.dep }}-web-0{{ item.value }}"
+              namespace: solutions.kestra4infra
+              displayName: "{{ outputs.ctx.values.dep }}-web-0{{ item.value }}"
+              provider: vsphere
+              region: dc-ams-1
+              state: running
+              status: active
+              owner: "{{ inputs.owner }}"
+              partOf:
+                id: "{{ outputs.ctx.values.dep }}"
+              related:
+                - id: "{{ outputs.ctx.values.dep }}-vlan"
+                  role: attached-to
+                - id: "{{ outputs.ctx.values.dep }}-sg"
+                  role: protected-by
+              assetActions:
+                - namespace: solutions.kestra4infra
+                  flowId: resize_vm
+                  label: Resize
+                  when:
+                    - field: status
+                      operator: EQUAL_TO
+                      value: active
+                - namespace: solutions.kestra4infra
+                  flowId: reapply_configuration
+                  label: Re-apply configuration
+                  when:
+                    - field: status
+                      operator: EQUAL_TO
+                      value: active
+                - namespace: solutions.kestra4infra
+                  flowId: blast_radius
+                  label: Blast radius
+              metadata:
+                cpu: "{{ outputs.ctx.values.cpu }}"
+                memory_gb: "{{ outputs.ctx.values.memory_gb }}"
+                os: RHEL 9.4
+                os_eol: "2032-05-31"
+                ip: "10.42.{{ outputs.ctx.values.vlan }}.1{{ item.value }}"
+                cluster: ams-prod-cl01
+                datastore: vsan-ams-01
+                terraform_workspace: "{{ outputs.ctx.values.dep }}"
+                terraform_address: module.vm["web-0{{ item.value }}"].vsphere_virtual_machine.this
+                backup_policy: "{{ inputs.env == 'prod' ? 'daily-35d' : 'weekly-14d' }}"
+                patch_group: "{{ inputs.env == 'prod' ? 'wave-3' : 'wave-1' }}"
+      # - id: terraform_vm
+      #   type: io.kestra.plugin.terraform.cli.TerraformCLI
+      #   commands:
+      #     - terraform init
+      #     - terraform apply -auto-approve -var "name={{ outputs.ctx.values.dep }}-web-0{{ item.value }}"
+
+      - id: ad_join
+        type: io.kestra.plugin.core.log.Log
+        message: "Joining {{ outputs.ctx.values.dep }}-web-0{{ item.value }} to corp.k4i (simulated)."
+        assets:
+          inputs:
+            - id: k4i-ad-domain
+          outputs:
+            - type: io.kestra.plugin.ee.assets.VM
+              id: "{{ outputs.ctx.values.dep }}-web-0{{ item.value }}"
+              namespace: solutions.kestra4infra
+              metadata:
+                ad_computer_dn: "CN={{ outputs.ctx.values.dep | upper }}-WEB0{{ item.value }},OU=Servers,DC=corp,DC=k4i"
+                ad_joined_at: "{{ now(format='iso_milli', timeZone='UTC') }}"
+
+      - id: ansible_baseline
+        type: io.kestra.plugin.core.log.Log
+        message: "ansible-playbook playbooks/cis_rhel9.yml --limit {{ outputs.ctx.values.dep }}-web-0{{ item.value }} (simulated)"
+        assets:
+          inputs:
+            - id: k4i-cis-baseline
+          outputs:
+            - type: io.kestra.plugin.ee.assets.VM
+              id: "{{ outputs.ctx.values.dep }}-web-0{{ item.value }}"
+              namespace: solutions.kestra4infra
+              related:
+                - id: k4i-cis-baseline
+                  role: configured-by
+              metadata:
+                config_baseline: CIS RHEL 9 L1 v2.4.1
+                config_applied_at: "{{ now(format='iso_milli', timeZone='UTC') }}"
+                config_drift: none
+      # - id: ansible_baseline
+      #   type: io.kestra.plugin.ansible.cli.AnsibleCLI
+      #   commands:
+      #     - ansible-playbook playbooks/cis_rhel9.yml --limit {{ outputs.ctx.values.dep }}-web-0{{ item.value }}
+
+      - id: install_app
+        type: io.kestra.plugin.core.log.Log
+        message: "Installing {{ inputs.app }} 3.8.2 on {{ outputs.ctx.values.dep }}-web-0{{ item.value }}, running as svc-{{ outputs.ctx.values.dep }} (simulated)."
+        assets:
+          inputs:
+            - id: "{{ outputs.ctx.values.dep }}-web-0{{ item.value }}"
+            - id: "{{ outputs.ctx.values.dep }}-svc"
+          outputs:
+            - type: kestra4infra.Application
+              id: "{{ outputs.ctx.values.dep }}-app"
+              namespace: solutions.kestra4infra
+              displayName: "{{ inputs.app }} ({{ inputs.env }})"
+              status: installing
+              owner: "{{ inputs.owner }}"
+              partOf:
+                id: "{{ outputs.ctx.values.dep }}"
+              related:
+                - id: "{{ outputs.ctx.values.dep }}-web-0{{ item.value }}"
+                  role: runs-on
+                - id: "{{ outputs.ctx.values.dep }}-svc"
+                  role: runs-as
+
+      - id: dns_record
+        type: io.kestra.plugin.core.log.Log
+        message: "Adding A {{ outputs.ctx.values.fqdn }} -> 10.42.{{ outputs.ctx.values.vlan }}.1{{ item.value }} in Infoblox (simulated)."
+        assets:
+          inputs:
+            - id: "{{ outputs.ctx.values.dep }}-web-0{{ item.value }}"
+            - id: k4i-dns-zone
+          outputs:
+            - type: kestra4infra.DnsRecord
+              id: "{{ outputs.ctx.values.dep }}-dns"
+              namespace: solutions.kestra4infra
+              displayName: "{{ outputs.ctx.values.fqdn }}"
+              status: active
+              owner: "{{ inputs.owner }}"
+              partOf:
+                id: "{{ outputs.ctx.values.dep }}"
+              related:
+                - id: k4i-dns-zone
+                  role: in-zone
+                - id: "{{ outputs.ctx.values.dep }}-web-0{{ item.value }}"
+                  role: resolves-to
+              assetActions:
+                - namespace: solutions.kestra4infra
+                  flowId: blast_radius
+                  label: Blast radius
+              metadata:
+                fqdn: "{{ outputs.ctx.values.fqdn }}"
+                record_type: A
+                values: "{{ outputs.ctx.values.ips }}"
+                ttl_seconds: "300"
+                provider: infoblox
+
+  # 11. A real certificate: openssl issues it with the requested validity, and its notAfter becomes
+  #     the asset's TTL. Self-signed here; in production the CSR goes to Vault PKI or ACME.
+  - id: issue_certificate
+    type: io.kestra.plugin.scripts.shell.Commands
+    taskRunner:
+      type: io.kestra.plugin.core.runner.Process
+    outputFiles:
+      - cert.pem
+    commands:
+      - |
+        set -e
+        FQDN="{{ outputs.ctx.values.fqdn }}"
+        openssl req -x509 -newkey rsa:2048 -nodes -keyout key.pem -out cert.pem \
+          -days {{ inputs.cert_validity_days }} -subj "/CN=$FQDN/O=K4I/OU={{ inputs.owner }}" \
+          -addext "subjectAltName=DNS:$FQDN,DNS:www.$FQDN" 2>/dev/null
+        rm -f key.pem
+        NB=$(date -u -d "$(openssl x509 -in cert.pem -noout -startdate | cut -d= -f2)" +%Y-%m-%dT%H:%M:%S.000Z)
+        NA=$(date -u -d "$(openssl x509 -in cert.pem -noout -enddate | cut -d= -f2)" +%Y-%m-%dT%H:%M:%S.000Z)
+        SERIAL=$(openssl x509 -in cert.pem -noout -serial | cut -d= -f2)
+        FP=$(openssl x509 -in cert.pem -noout -fingerprint -sha256 | cut -d= -f2)
+        echo "issued $FQDN serial $SERIAL valid until $NA"
+        echo "::{\"outputs\":{\"not_before\":\"$NB\",\"not_after\":\"$NA\",\"serial\":\"$SERIAL\",\"fingerprint\":\"$FP\"}}::"
+
+  - id: record_certificate
+    type: io.kestra.plugin.core.log.Log
+    message: "Certificate for {{ outputs.ctx.values.fqdn }} expires {{ outputs.issue_certificate.vars.not_after }}."
+    assets:
+      inputs:
+        - id: "{{ outputs.ctx.values.dep }}-dns"
+        - id: k4i-issuing-ca
+      outputs:
+        - type: kestra4infra.Certificate
+          id: "{{ outputs.ctx.values.dep }}-cert"
+          namespace: solutions.kestra4infra
+          displayName: "TLS {{ outputs.ctx.values.fqdn }}"
+          status: active
+          owner: "{{ inputs.owner }}"
+          ttl: "{{ outputs.issue_certificate.vars.not_after }}"
+          partOf:
+            id: "{{ outputs.ctx.values.dep }}"
+          related:
+            - id: k4i-issuing-ca
+              role: issued-by
+            - id: "{{ outputs.ctx.values.dep }}-dns"
+              role: issued-for
+          assetActions:
+            - namespace: solutions.kestra4infra
+              flowId: renew_certificate
+              label: Renew certificate
+              when:
+                - field: status
+                  operator: EQUAL_TO
+                  value: active
+            - namespace: solutions.kestra4infra
+              flowId: blast_radius
+              label: Blast radius
+          metadata:
+            subject_cn: "{{ outputs.ctx.values.fqdn }}"
+            sans: "{{ outputs.ctx.values.fqdn }}, www.{{ outputs.ctx.values.fqdn }}"
+            issuer: K4I Issuing CA G2
+            serial: "{{ outputs.issue_certificate.vars.serial }}"
+            fingerprint_sha256: "{{ outputs.issue_certificate.vars.fingerprint }}"
+            not_before: "{{ outputs.issue_certificate.vars.not_before }}"
+            not_after: "{{ outputs.issue_certificate.vars.not_after }}"
+            key_algorithm: RSA-2048
+            installed_on: "{{ outputs.ctx.values.dep }}-app"
+            pem_file: "{{ outputs.issue_certificate.outputFiles['cert.pem'] }}"
+
+  # 12. The certificate goes into the application: certificate > application in the graph.
+  - id: install_certificate
+    type: io.kestra.plugin.core.log.Log
+    message: "Deploying the certificate to the {{ inputs.vm_count }} servers and reloading nginx (simulated)."
+    assets:
+      inputs:
+        - id: "{{ outputs.ctx.values.dep }}-cert"
+      outputs:
+        - type: kestra4infra.Application
+          id: "{{ outputs.ctx.values.dep }}-app"
+          namespace: solutions.kestra4infra
+          status: active
+          related:
+            - id: "{{ outputs.ctx.values.dep }}-cert"
+              role: serves-with
+          assetActions:
+            - namespace: solutions.kestra4infra
+              flowId: run_health_check
+              label: Run health check
+            - namespace: solutions.kestra4infra
+              flowId: blast_radius
+              label: Blast radius
+          metadata:
+            version: 3.8.2
+            runtime: openjdk-21
+            url: "https://{{ outputs.ctx.values.fqdn }}"
+            port: "443"
+            instances: "{{ inputs.vm_count }}"
+            service_account: "svc-{{ outputs.ctx.values.dep }}"
+            tls_certificate: "{{ outputs.ctx.values.dep }}-cert"
+            tls_expires_at: "{{ outputs.issue_certificate.vars.not_after }}"
+            support_group: "{{ inputs.owner }}"
+            rto: "{{ inputs.env == 'prod' ? '4h' : '48h' }}"
+            license_expires_at: "{{ now() | dateAdd(amount=300, unit='DAYS', format='yyyy-MM-dd', timeZone='UTC') }}"
+
+  # 13. Health check through the whole chain: firewall rule, DNS, certificate, application.
+  - id: health_check
+    type: io.kestra.plugin.core.log.Log
+    message: "GET https://{{ outputs.ctx.values.fqdn }}/healthz -> 200 in 42 ms (simulated)."
+    assets:
+      inputs:
+        - id: "{{ outputs.ctx.values.dep }}-app"
+        - id: "{{ outputs.ctx.values.dep }}-fw-https"
+      outputs:
+        - type: kestra4infra.HealthCheck
+          id: "{{ outputs.ctx.values.dep }}-health"
+          namespace: solutions.kestra4infra
+          displayName: "healthz {{ outputs.ctx.values.fqdn }}"
+          status: active
+          owner: "{{ inputs.owner }}"
+          partOf:
+            id: "{{ outputs.ctx.values.dep }}"
+          related:
+            - id: "{{ outputs.ctx.values.dep }}-app"
+              role: checks
+          assetActions:
+            - namespace: solutions.kestra4infra
+              flowId: run_health_check
+              label: Run health check
+          metadata:
+            endpoint: "https://{{ outputs.ctx.values.fqdn }}/healthz"
+            health: healthy
+            http_status: "200"
+            latency_ms: "42"
+            last_checked_at: "{{ now(format='iso_milli', timeZone='UTC') }}"
+  # - id: health_check
+  #   type: io.kestra.plugin.core.http.Request
+  #   uri: "https://{{ outputs.ctx.values.fqdn }}/healthz"
+
+  - id: finalize
+    type: io.kestra.plugin.core.log.Log
+    message: |
+      Deployment {{ outputs.ctx.values.dep }} is active.
+      https://{{ outputs.ctx.values.fqdn }} on {{ outputs.ctx.values.ips }}
+      Certificate until {{ outputs.issue_certificate.vars.not_after }}, svc password until {{ outputs.ctx.values.password_expires }}, lease until {{ outputs.ctx.values.lease_until }}.
+    assets:
+      outputs:
+        - type: io.kestra.plugin.ee.assets.Deployment
+          id: "{{ outputs.ctx.values.dep }}"
+          namespace: solutions.kestra4infra
+          status: active
+          metadata:
+            url: "https://{{ outputs.ctx.values.fqdn }}"
+            servers: "{{ inputs.vm_count }}"
+            provisioned_at: "{{ now(format='iso_milli', timeZone='UTC') }}"
+            cert_expires_at: "{{ outputs.issue_certificate.vars.not_after }}"
+            svc_password_expires_at: "{{ outputs.ctx.values.password_expires }}"

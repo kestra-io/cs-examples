@@ -1,0 +1,65 @@
+id: k4i-reapply-configuration
+namespace: solutions.kestra4infra
+type: io.kestra.plugin.ee.apps.Execution
+flowId: reapply_configuration
+
+displayName: Re-apply the server baseline
+description: "Runs the CIS RHEL 9 baseline playbook on a server again, or in check mode to report drift only."
+tags:
+  - kestra4infra
+  - day-2
+  - compliance
+
+access:
+  type: PRIVATE
+  catalog: true
+
+layout:
+  - on: OPEN
+    blocks:
+      - type: io.kestra.plugin.ee.apps.core.blocks.Markdown
+        content: |
+          ## Re-apply the server baseline
+
+          Runs the CIS RHEL 9 baseline playbook on a server again, or in check mode to report drift only.
+
+      - type: io.kestra.plugin.ee.apps.execution.blocks.CreateExecutionForm
+
+      - type: io.kestra.plugin.ee.apps.execution.blocks.CreateExecutionButton
+        text: Run
+        style: INFO
+
+  - on: RUNNING
+    blocks:
+      - type: io.kestra.plugin.ee.apps.core.blocks.Markdown
+        content: |
+          ## Running the playbook:
+
+      - type: io.kestra.plugin.ee.apps.execution.blocks.Gantt
+
+  - on: SUCCESS
+    blocks:
+      - type: io.kestra.plugin.ee.apps.core.blocks.Markdown
+        content: |
+          ## Done
+
+      - type: io.kestra.plugin.ee.apps.execution.blocks.Logs
+        filter:
+          taskIds:
+            - playbook
+      - type: io.kestra.plugin.ee.apps.execution.blocks.Assets
+        filter:
+          include:
+            - io.kestra.plugin.ee.assets.VM
+
+  - on: FAILURE
+    blocks:
+      - type: io.kestra.plugin.ee.apps.core.blocks.Markdown
+        content: |
+          ## Re-apply the server baseline: failed
+
+      - type: io.kestra.plugin.ee.apps.core.blocks.Stacktrace
+
+      - type: io.kestra.plugin.ee.apps.execution.blocks.Logs
+        filter:
+          logLevel: ERROR
