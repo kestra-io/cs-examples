@@ -471,8 +471,8 @@ tasks:
   #     the asset's TTL. Self-signed here; in production the CSR goes to Vault PKI or ACME.
   - id: issue_certificate
     type: io.kestra.plugin.scripts.shell.Commands
-    taskRunner:
-      type: io.kestra.plugin.core.runner.Process
+    # Default task runner (Docker). This image ships openssl 3; the default `ubuntu` does not.
+    containerImage: python:3.12-slim
     outputFiles:
       - cert.pem
     commands:
@@ -483,8 +483,9 @@ tasks:
           -days {{ inputs.cert_validity_days }} -subj "/CN=$FQDN/O=K4I/OU={{ inputs.owner }}" \
           -addext "subjectAltName=DNS:$FQDN,DNS:www.$FQDN" 2>/dev/null
         rm -f key.pem
-        NB=$(date -u -d "$(openssl x509 -in cert.pem -noout -startdate | cut -d= -f2)" +%Y-%m-%dT%H:%M:%S.000Z)
-        NA=$(date -u -d "$(openssl x509 -in cert.pem -noout -enddate | cut -d= -f2)" +%Y-%m-%dT%H:%M:%S.000Z)
+        iso() { openssl x509 -in cert.pem -noout -dateopt iso_8601 "$1" | cut -d= -f2 | sed "s/ /T/; s/Z$/.000Z/"; }
+        NB=$(iso -startdate)
+        NA=$(iso -enddate)
         SERIAL=$(openssl x509 -in cert.pem -noout -serial | cut -d= -f2)
         FP=$(openssl x509 -in cert.pem -noout -fingerprint -sha256 | cut -d= -f2)
         echo "issued $FQDN serial $SERIAL valid until $NA"
